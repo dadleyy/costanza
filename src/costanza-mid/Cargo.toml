@@ -3,6 +3,32 @@ name = "costanza-mid"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "costanza"
+path = "src/lib.rs"
+
+[[bin]]
+name = "costanza-m"
+path = "src/main.rs"
+
+[[bin]]
+name = "mock-grbl"
+path = "src/bin/mock-grbl.rs"
 
 [dependencies]
+async-std = { version = "1.12.0", features = ["attributes", "unstable"] }
+chrono = { version = "0.4.23", features = ["serde"] }
+clap = { version = "4.0.26", features = ["derive", "cargo"] }
+futures-lite = "1.12.0"
+jsonwebtoken = "8.1.1"
+kramer = { version = "1.3.2", features = ["kramer-async"] }
+serde = { version = "1.0.147", features = ["derive"] }
+serde_json = "1.0.87"
+serialport = "4.2.0"
+surf = "2.3.2"
+tide = "0.16.0"
+tide-websockets = "0.4.0"
+toml = "0.5.9"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+uuid = { version = "1.2.2", features = ["v4"] }
