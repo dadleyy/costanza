@@ -15,10 +15,15 @@ body {
 }
 
 a,
-button {
-  @apply cursor-pointer;
+button,
+input[type="text"] {
   @apply block;
   @apply px-3 py-2;
+}
+
+a,
+button {
+  @apply cursor-pointer;
   @apply rounded;
 }
 
@@ -72,4 +77,17 @@ button:disabled {
   @apply border-slate-600;
   @apply opacity-40;
   @apply rounded-sm;
+}
+
+input[type="text"]:not(:disabled) {
+  @apply block;
+  @apply bg-slate-800;
+  @apply text-slate-100;
+}
+
+.code-container {
+  @apply px-3 py-3;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-color: rgba(0, 0, 0, 0.4);
+  @apply border border-solid rounded;
 }

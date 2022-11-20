@@ -1,0 +1,3 @@
+[alias]
+mid = "run --bin costanza-m"
+mock = "run --bin mock-grbl"

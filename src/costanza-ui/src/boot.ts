@@ -71,6 +71,8 @@ type TElmMessage = { kind: "websocket"; payload: string } | { kind: "control" };
       });
 
       websocket.addEventListener("message", (event) => {
+        console.log("Has message from server - ", event.data);
+
         app.ports.messageReceiver.send(
           JSON.stringify({ kind: "websocket", payload: event.data as string })
         );
@@ -91,6 +93,9 @@ type TElmMessage = { kind: "websocket"; payload: string } | { kind: "control" };
           // layer. currently all this is doing is being a way for elm to connect our ws.
           case "control":
             connect(wsURL || "");
+            break;
+          default:
+            console.warn("Unrecognized elm message", content);
             break;
         }
       } catch (error) {

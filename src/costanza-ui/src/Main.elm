@@ -5,6 +5,7 @@ import Browser.Navigation as Nav
 import Button
 import Html
 import Html.Attributes as AT
+import Html.Events as EV
 import Http
 import Json.Decode as JD
 import Json.Encode as JE
@@ -47,12 +48,13 @@ type Request
 
 type alias HomePage =
     { lastRequest : Request
+    , currentInput : String
+    , tick : Int
     }
 
 
 type Page
     = Home HomePage
-    | Input String
 
 
 type Model
@@ -65,8 +67,10 @@ type Model
 type Message
     = LinkClicked Browser.UrlRequest
     | UrlChanged Url.Url
+    | UpdateHomeInput String
     | SessionLoaded (Result Http.Error SessionPayload)
     | WebsocketMessage String
+    | AttemptSend String
     | Tick Time.Posix
 
 
@@ -119,12 +123,45 @@ update message model =
         LinkClicked (Browser.External href) ->
             ( model, Nav.load href )
 
+        UpdateHomeInput value ->
+            case model of
+                Authorized (Home homePage) _ session ->
+                    let
+                        nextHome =
+                            { homePage | currentInput = value }
+                    in
+                    ( Authorized (Home nextHome) env session, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        AttemptSend payload ->
+            let
+                ( nextModel, tick ) =
+                    case model of
+                        Authorized (Home homePage) _ session ->
+                            let
+                                newTick =
+                                    homePage.tick + 1
+
+                                nextHome =
+                                    { homePage | lastRequest = Pending, tick = newTick }
+                            in
+                            ( Authorized (Home nextHome) env session, nextHome.tick )
+
+                        _ ->
+                            ( model, 0 )
+
+                cmd =
+                    sendInputMessage payload tick
+            in
+            ( nextModel, cmd )
+
         UrlChanged _ ->
             ( model, Cmd.none )
 
         WebsocketMessage rawMessage ->
-            Debug.log (Debug.toString rawMessage)
-                ( model, Cmd.none )
+            ( model, Cmd.none )
 
 
 view : Model -> Browser.Document Message
@@ -159,7 +196,7 @@ modelFromSessionPayload : Environment -> SessionPayload -> ( Model, Cmd Message 
 modelFromSessionPayload env payload =
     case payload.ok of
         True ->
-            ( Maybe.map (Authorized (Home (HomePage NotAsked)) env) payload.session.user
+            ( Maybe.map (Authorized (Home { lastRequest = NotAsked, currentInput = "", tick = 0 }) env) payload.session.user
                 |> Maybe.withDefault (Unauthorized env)
             , startWebsocket
             )
@@ -256,11 +293,24 @@ viewPage page env session =
     case page of
         Home homePage ->
             Html.div [ AT.class "pt-8 flex items-center flex-col w-full h-full" ]
-                []
+                [ Html.div [ AT.class "flex items-center w-full px-8" ]
+                    [ Html.input [ AT.type_ "text", AT.class "mr-3 flex-1", AT.value homePage.currentInput, EV.onInput UpdateHomeInput ] []
+                    , Button.view
+                        ( Button.Icon Button.Plane (AttemptSend homePage.currentInput)
+                        , if String.isEmpty homePage.currentInput || homePage.lastRequest == Pending then
+                            Button.Disabled
 
-        Input value ->
-            Html.div [ AT.class "px-3 py-3" ]
-                []
+                          else
+                            Button.Primary
+                        )
+                    ]
+                , Html.div [ AT.class "w-full flex-1 px-8 mt-4" ]
+                    [ Html.div [ AT.class "code-container w-full" ]
+                        [ Html.code []
+                            [ Html.text "hi" ]
+                        ]
+                    ]
+                ]
 
 
 header : Environment -> SessionUserData -> Html.Html Message
@@ -282,3 +332,18 @@ startWebsocket =
             JE.object [ ( "kind", JE.string "control" ) ]
     in
     sendMessage (JE.encode 0 message)
+
+
+sendInputMessage : String -> Int -> Cmd Message
+sendInputMessage input tick =
+    let
+        -- Encode the actual command as a json value, serialize that into a string, and encode that string
+        -- into another json value. The intermediary json value is what is parsed on the JS/TS `boot`
+        -- "kernel" that is sent along to the server.
+        payload =
+            JE.object [ ( "kind", JE.string "raw_serial" ), ( "value", JE.string input ), ( "tick", JE.int tick ) ]
+
+        values =
+            JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 payload) ) ]
+    in
+    sendMessage (JE.encode 0 values)

@@ -1,22 +1,28 @@
 //! This module contains the main type that is shared across request tasks.
 
 use super::sec;
+use async_std::{channel, sync};
+use serde::Serialize;
 use std::io;
 
 #[derive(Clone)]
 pub struct SharedState {
   pub(super) config: super::configuration::Configuration,
 
-  pub(super) redis: async_std::sync::Arc<async_std::sync::Mutex<Option<async_std::net::TcpStream>>>,
+  pub(super) redis: sync::Arc<sync::Mutex<Option<async_std::net::TcpStream>>>,
+
+  pub(super) messages: channel::Sender<super::Message>,
+
+  pub(super) registration: channel::Sender<(String, channel::Sender<super::Command>)>,
 
   pub(super) span: tracing::Span,
 }
 
 impl SharedState {
   /// Executes a redis command against our shared, mutex locked redis "pool".
-  pub(super) async fn command<S, V>(&self, command: kramer::Command<S, V>) -> io::Result<kramer::Response>
+  pub(super) async fn command<K, V>(&self, command: kramer::Command<K, V>) -> io::Result<kramer::Response>
   where
-    S: std::fmt::Display,
+    K: std::fmt::Display,
     V: std::fmt::Display,
   {
     let mut redis = self.redis.lock().await;

@@ -9,6 +9,7 @@ type ButtonIcon
     = LightOn
     | LightOff
     | CircleDot
+    | Plane
     | Video
     | Camera
 
@@ -86,6 +87,9 @@ iconClass kind =
     case kind of
         Video ->
             "fa-solid fa-video"
+
+        Plane ->
+            "fa-solid fa-paper-plane"
 
         Camera ->
             "fa-solid fa-camera"
