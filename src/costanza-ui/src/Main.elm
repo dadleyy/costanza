@@ -1,95 +1,46 @@
-port module Main exposing (..)
+module Main exposing (..)
 
+import Boot
 import Browser
 import Browser.Navigation as Nav
-import Button
+import Environment as Env
+import HomePage
 import Html
 import Html.Attributes as AT
 import Html.Events as EV
 import Http
-import Icon
-import Json.Decode as JD
-import Json.Encode as JE
+import Session
 import Task
 import Time
 import Url
 
 
-type alias Environment =
-    { apiRoot : String
-    , uiRoot : String
-    , loginURL : String
-    , logoutURL : String
-    , version : String
-    }
 
-
-type alias SessionUserData =
-    { name : String
-    , picture : String
-    , user_id : String
-    }
-
-
-type alias SessionData =
-    { user : Maybe SessionUserData }
-
-
-type alias SessionPayload =
-    { ok : Bool
-    , session : SessionData
-    }
-
-
-type Request
-    = Done (Result Http.Error ())
-    | Pending
-    | NotAsked
-
-
-type alias HomePage =
-    { lastRequest : Request
-    , currentInput : String
-    , connected : Bool
-    , tick : Int
-    }
+-- The connection state represents that we are either disconnected from the websocket, or
+-- we are connected with some connection state for the underlying serial connection.
 
 
 type Page
-    = Home HomePage
+    = Home HomePage.HomePage
 
 
 type Model
-    = Booting Environment
-    | Unauthorized Environment
-    | Authorized Page Environment SessionUserData
-    | Failed Environment
+    = Booting Env.Environment
+    | Unauthorized Env.Environment
+    | Authorized Page Env.Environment Session.SessionUserData
+    | Failed Env.Environment
 
 
 type Message
     = LinkClicked Browser.UrlRequest
     | UrlChanged Url.Url
-    | UpdateHomeInput String
-    | SessionLoaded (Result Http.Error SessionPayload)
+    | HomeMessage HomePage.Message
+    | SessionLoaded (Result Http.Error Session.SessionPayload)
     | WebsocketMessage String
-    | AttemptSend String
     | Tick Time.Posix
 
 
-type alias WebsocketResponse =
-    { kind : String
-    , connected : Maybe Bool
-    , payload : Maybe String
-    }
-
-
-port sendMessage : String -> Cmd msg
-
-
-port messageReceiver : (String -> msg) -> Sub msg
-
-
-main : Program Environment Model Message
+main : Program Env.Environment Model Message
 main =
     Browser.application
         { init = init
@@ -101,7 +52,7 @@ main =
         }
 
 
-init : Environment -> Url.Url -> Nav.Key -> ( Model, Cmd Message )
+init : Env.Environment -> Url.Url -> Nav.Key -> ( Model, Cmd Message )
 init env url key =
     let
         model =
@@ -116,109 +67,66 @@ update message model =
         env =
             envFromModel model
     in
-    case message of
-        Tick _ ->
+    case ( message, model ) of
+        ( HomeMessage inner, Authorized (Home homePage) _ session ) ->
+            let
+                ( nextHome, cmd ) =
+                    HomePage.update inner homePage
+            in
+            ( Authorized (Home nextHome) env session, cmd |> Cmd.map HomeMessage )
+
+        ( HomeMessage _, _ ) ->
             ( model, Cmd.none )
 
-        SessionLoaded (Ok payload) ->
+        ( Tick posixValue, Authorized (Home homePage) _ session ) ->
+            let
+                ( nextHome, cmd ) =
+                    HomePage.update (HomePage.Tick posixValue) homePage
+            in
+            ( Authorized (Home nextHome) env session, cmd |> Cmd.map HomeMessage )
+
+        ( Tick posixValue, _ ) ->
+            ( model, Cmd.none )
+
+        ( SessionLoaded (Ok payload), _ ) ->
             modelFromSessionPayload env payload
 
-        SessionLoaded (Err error) ->
+        ( SessionLoaded (Err error), _ ) ->
             ( Failed env, Cmd.none )
 
-        LinkClicked (Browser.Internal url) ->
+        ( LinkClicked (Browser.Internal url), _ ) ->
             ( model, Cmd.none )
 
-        LinkClicked (Browser.External href) ->
+        ( LinkClicked (Browser.External href), _ ) ->
             ( model, Nav.load href )
 
-        UpdateHomeInput value ->
-            case model of
-                Authorized (Home homePage) _ session ->
-                    let
-                        nextHome =
-                            { homePage | currentInput = value }
-                    in
-                    ( Authorized (Home nextHome) env session, Cmd.none )
-
-                _ ->
-                    ( model, Cmd.none )
-
-        AttemptSend payload ->
-            let
-                ( nextModel, tick ) =
-                    case model of
-                        Authorized (Home homePage) _ session ->
-                            let
-                                newTick =
-                                    homePage.tick + 1
-
-                                nextHome =
-                                    { homePage | lastRequest = Pending, tick = newTick }
-                            in
-                            ( Authorized (Home nextHome) env session, nextHome.tick )
-
-                        _ ->
-                            ( model, 0 )
-
-                cmd =
-                    sendInputMessage payload tick
-            in
-            ( nextModel, cmd )
-
-        UrlChanged _ ->
+        ( UrlChanged _, _ ) ->
             ( model, Cmd.none )
 
-        WebsocketMessage rawMessage ->
+        ( WebsocketMessage rawMessage, Authorized (Home homePage) _ session ) ->
             let
-                parsed =
-                    parseMessage rawMessage
-
-                ( newModel, cmd ) =
-                    case ( parsed, model ) of
-                        ( Ok res, Authorized (Home home) _ session ) ->
-                            let
-                                connected =
-                                    case ( res.kind == "control", res.connected ) of
-                                        ( True, Just True ) ->
-                                            True
-
-                                        ( True, Nothing ) ->
-                                            False
-
-                                        ( True, Just False ) ->
-                                            False
-
-                                        ( False, _ ) ->
-                                            home.connected
-
-                                newHome =
-                                    { home | lastRequest = Done (Ok ()), connected = connected }
-                            in
-                            ( Authorized (Home newHome) env session, Cmd.none )
-
-                        ( Err _, Authorized (Home home) _ session ) ->
-                            ( model, Cmd.none )
-
-                        _ ->
-                            ( model, Cmd.none )
+                ( nextHome, cmd ) =
+                    HomePage.update (HomePage.RawWebsocket rawMessage) homePage
             in
-            ( newModel, cmd )
+            ( Authorized (Home nextHome) env session, cmd |> Cmd.map HomeMessage )
+
+        ( WebsocketMessage _, _ ) ->
+            ( model, Cmd.none )
 
 
 view : Model -> Browser.Document Message
 view model =
-    { title = "milton-ui"
+    { title = "costanza"
     , body = [ viewBody model, viewFooter model ]
     }
 
 
 subscriptions : Model -> Sub Message
 subscriptions model =
-    Sub.batch [ Time.every 1000 Tick, messageReceiver WebsocketMessage ]
+    Sub.batch [ Time.every 1000 Tick, Boot.messageReceiver WebsocketMessage ]
 
 
-envFromModel : Model -> Environment
+envFromModel : Model -> Env.Environment
 envFromModel model =
     case model of
         Authorized _ env _ ->
@@ -234,22 +142,17 @@ envFromModel model =
             env
 
 
-modelFromSessionPayload : Environment -> SessionPayload -> ( Model, Cmd Message )
+modelFromSessionPayload : Env.Environment -> Session.SessionPayload -> ( Model, Cmd Message )
 modelFromSessionPayload env payload =
     case payload.ok of
         True ->
-            ( Maybe.map (Authorized (Home emptyHome) env) payload.session.user
+            ( Maybe.map (Authorized (Home HomePage.init) env) payload.session.user
                 |> Maybe.withDefault (Unauthorized env)
-            , startWebsocket
+            , Boot.startWebsocket
             )
 
         False ->
             ( Unauthorized env, Cmd.none )
-
-
-emptyHome : HomePage
-emptyHome =
-    { lastRequest = NotAsked, tick = 0, connected = False, currentInput = "" }
 
 
 getAuthURL : Model -> String
@@ -259,27 +162,7 @@ getAuthURL model =
 
 loadAuth : Model -> Cmd Message
 loadAuth model =
-    Http.get { url = getAuthURL model, expect = Http.expectJson SessionLoaded sessionDecoder }
-
-
-sessionUserDataDecoder : JD.Decoder SessionUserData
-sessionUserDataDecoder =
-    JD.map3 SessionUserData
-        (JD.field "name" JD.string)
-        (JD.field "picture" JD.string)
-        (JD.field "user_id" JD.string)
-
-
-sessionFieldDecoder : JD.Decoder SessionData
-sessionFieldDecoder =
-    JD.map SessionData (JD.nullable (JD.field "user" sessionUserDataDecoder))
-
-
-sessionDecoder : JD.Decoder SessionPayload
-sessionDecoder =
-    JD.map2 SessionPayload
-        (JD.field "ok" JD.bool)
-        (JD.field "session" sessionFieldDecoder)
+    Http.get { url = getAuthURL model, expect = Http.expectJson SessionLoaded Session.decode }
 
 
 viewFooter : Model -> Html.Html Message
@@ -287,7 +170,7 @@ viewFooter model =
     Html.footer [ AT.class "footer fixed bottom-0 left-0 w-full bg-slate-800" ]
         [ Html.div [ AT.class "flex items-center px-3 py-2 border-t border-solid border-slate-800" ]
             [ Html.div [ AT.class "ml-auto" ]
-                [ Html.a [ AT.href "https://github.com/dadleyy/milton", AT.rel "noopener", AT.target "_blank" ]
+                [ Html.a [ AT.href "https://github.com/dadleyy/costanza", AT.rel "noopener", AT.target "_blank" ]
                     [ Html.text (envFromModel model |> .version) ]
                 ]
             ]
@@ -335,50 +218,14 @@ viewBody model =
         ]
 
 
-viewPage : Page -> Environment -> SessionUserData -> Html.Html Message
+viewPage : Page -> Env.Environment -> Session.SessionUserData -> Html.Html Message
 viewPage page env session =
     case page of
         Home homePage ->
-            let
-                isDisabled =
-                    homePage.connected == False || homePage.lastRequest == Pending
-            in
-            Html.div [ AT.class "pt-8 flex items-center flex-col w-full h-full" ]
-                [ Html.div [ AT.class "flex items-center w-full px-8" ]
-                    [ Html.div [ AT.class "mr-4" ]
-                        [ if homePage.connected then
-                            Icon.view Icon.Wifi
-
-                          else
-                            Icon.view Icon.Exclamation
-                        ]
-                    , Html.input
-                        [ AT.type_ "text"
-                        , AT.class "mr-3 flex-1"
-                        , AT.value homePage.currentInput
-                        , EV.onInput UpdateHomeInput
-                        , AT.disabled isDisabled
-                        ]
-                        []
-                    , Button.view
-                        ( Button.Icon Button.Plane (AttemptSend homePage.currentInput)
-                        , if String.isEmpty homePage.currentInput || isDisabled then
-                            Button.Disabled
-
-                          else
-                            Button.Primary
-                        )
-                    ]
-                , Html.div [ AT.class "w-full flex-1 px-8 mt-4" ]
-                    [ Html.div [ AT.class "code-container w-full" ]
-                        [ Html.code []
-                            [ Html.text "hi" ]
-                        ]
-                    ]
-                ]
+            HomePage.view homePage |> Html.map HomeMessage
 
 
-header : Environment -> SessionUserData -> Html.Html Message
+header : Env.Environment -> Session.SessionUserData -> Html.Html Message
 header env session =
     Html.div [ AT.class "px-3 py-3 flex items-center border-b border-solid border-stone-700" ]
         [ Html.div []
@@ -388,42 +235,3 @@ header env session =
                 [ Html.text "logout" ]
             ]
         ]
-
-
-startWebsocket : Cmd Message
-startWebsocket =
-    let
-        message =
-            JE.object [ ( "kind", JE.string "control" ) ]
-    in
-    sendMessage (JE.encode 0 message)
-
-
-sendInputMessage : String -> Int -> Cmd Message
-sendInputMessage input tick =
-    let
-        -- Encode the actual command as a json value, serialize that into a string, and encode that string
-        -- into another json value. The intermediary json value is what is parsed on the JS/TS `boot`
-        -- "kernel" that is sent along to the server.
-        payload =
-            JE.object [ ( "kind", JE.string "raw_serial" ), ( "value", JE.string input ), ( "tick", JE.int tick ) ]
-
-        values =
-            JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 payload) ) ]
-    in
-    sendMessage (JE.encode 0 values)
-
-
-decoder : JD.Decoder WebsocketResponse
-decoder =
-    JD.map3 WebsocketResponse
-        (JD.field "kind" JD.string)
-        (JD.maybe (JD.field "connected" JD.bool))
-        (JD.maybe (JD.field "payload" JD.string))
-
-
-parseMessage : String -> Result JD.Error WebsocketResponse
-parseMessage inner =
-    JD.decodeString
-        decoder
-        inner

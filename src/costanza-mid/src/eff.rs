@@ -8,11 +8,13 @@ pub trait EffectCommandFilter {
   fn sendable(&self, command: &Self::Command) -> bool;
 }
 
+pub type UnbindResult<M, C> = io::Result<(channel::Receiver<M>, channel::Sender<C>)>;
+
 pub trait Effect {
   type Message;
   type Command;
 
-  fn detach(&mut self) -> io::Result<(channel::Receiver<Self::Message>, channel::Sender<Self::Command>)>;
+  fn detach(&mut self) -> UnbindResult<Self::Message, Self::Command>;
 }
 
 pub trait Application {
@@ -24,12 +26,16 @@ pub trait Application {
     Self: Sized;
 }
 
+/// Each effect runtime will provide us a pair of sender/receiver channels and a filter that we can
+/// use to determine what commands belong to what channels.
+struct EffectChannels<M, C>(
+  channel::Receiver<M>,
+  channel::Sender<C>,
+  Box<dyn EffectCommandFilter<Command = C>>,
+);
+
 pub struct EffectRuntime<M, C, A> {
-  channels: Vec<(
-    channel::Receiver<M>,
-    channel::Sender<C>,
-    Box<dyn EffectCommandFilter<Command = C>>,
-  )>,
+  channels: Vec<EffectChannels<M, C>>,
   application: A,
 }
 
@@ -52,7 +58,7 @@ where
     F: EffectCommandFilter<Command = C> + 'static,
   {
     let (s, r) = effect.detach()?;
-    self.channels.push((s, r, Box::new(filter)));
+    self.channels.push(EffectChannels(s, r, Box::new(filter)));
     Ok(())
   }
 
@@ -62,7 +68,7 @@ where
     loop {
       let mut future_list = futures::stream::FuturesUnordered::new();
 
-      for (message_receiver, _, _) in self.channels.iter() {
+      for EffectChannels(message_receiver, _, _) in self.channels.iter() {
         future_list.push(message_receiver.recv());
       }
 
@@ -98,7 +104,7 @@ where
           let serialized = format!("{cmd:?}");
           let mut sent = false;
 
-          for (_, cmd_sink, filter) in self.channels.iter() {
+          for EffectChannels(_, cmd_sink, filter) in self.channels.iter() {
             let sendable = filter.sendable(&cmd);
             tracing::debug!("checking senability of {serialized} ({sendable})");
 

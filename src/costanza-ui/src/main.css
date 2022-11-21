@@ -98,3 +98,9 @@ input[type="text"]:not(:disabled) {
   border-color: rgba(0, 0, 0, 0.4);
   @apply border border-solid rounded;
 }
+
+.scrollback-terminal {
+  @apply block;
+  max-height: 50vh;
+  overflow-y: auto;
+}

@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "costanza-m"
-path = "src/bin/costanza-mid.rs"
+path = "src/bin/costanza-m.rs"
 
 [[bin]]
 name = "mock-grbl"

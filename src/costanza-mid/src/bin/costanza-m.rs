@@ -1,15 +1,23 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use futures_lite::future::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::io;
 
+/// The configuration we will load from the filesystem is an amalgamation of internal
+/// configurations for the various effect systems.
 #[derive(Deserialize, Debug)]
 struct Configuration {
-  http: costanza::server::Configuration,
+  /// The configuration used by our http server.
+  http: costanza::effects::http::Configuration,
+
+  /// The configuration used by the serial connection.
   serial: Option<costanza::effects::serial::SerialConfiguration>,
 }
 
 #[derive(Parser)]
+#[clap(version = option_env!("COSTANZA_VERSION").unwrap_or("dev"))]
 struct CommandLineArguments {
   #[clap(long, short)]
   config: String,
@@ -19,26 +27,26 @@ struct CommandLineArguments {
 enum Message {
   Tick,
   Serial(String),
-  Http(costanza::server::Message),
+  Http(costanza::effects::http::Message),
+
+  DisconnectedSerial,
+  ConnectedSerial,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum SerialCommand {
   #[allow(dead_code)]
-  Ping,
-
   Raw(String),
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct RawSerialRequest {
   tick: u32,
   value: String,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(tag = "kind")]
-#[serde(rename_all = "snake_case")]
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 enum ClientMessage {
   RawSerial(RawSerialRequest),
 }
@@ -46,7 +54,6 @@ enum ClientMessage {
 impl std::fmt::Display for SerialCommand {
   fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
     match &self {
-      SerialCommand::Ping => writeln!(formatter, "hi"),
       SerialCommand::Raw(inner) => writeln!(formatter, "{inner}"),
     }
   }
@@ -57,7 +64,7 @@ enum Command {
   #[allow(dead_code)]
   Serial(SerialCommand),
 
-  Http(costanza::server::Command),
+  Http(costanza::effects::http::Command),
 }
 
 impl std::fmt::Display for Command {
@@ -69,9 +76,26 @@ impl std::fmt::Display for Command {
   }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct ReceivedDataEntry {
+  content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "history_kind", rename_all = "snake_case")]
+enum ClientHistoryEntry {
+  SentCommand(ClientMessage),
+  ReceivedData(ReceivedDataEntry),
+}
+
 #[derive(Serialize, Debug, Default)]
 struct DerivedClientState {
   tick: u32,
+  history: Vec<ClientHistoryEntry>,
+
+  /// Whether or not the serial connection is available.
+  serial_available: bool,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -88,15 +112,10 @@ enum ResponseKinds<'a> {
 }
 
 #[derive(Default)]
-struct ClientState {
-  history: Vec<ClientMessage>,
-  derived: DerivedClientState,
-}
-
-#[derive(Default)]
 struct Application {
   last_home: Option<std::time::Instant>,
-  connected_clients: std::collections::HashMap<String, ClientState>,
+  connected_clients: std::collections::HashMap<String, DerivedClientState>,
+  serial_available: bool,
 }
 
 impl costanza::eff::Application for Application {
@@ -105,17 +124,48 @@ impl costanza::eff::Application for Application {
 
   fn update(self, message: Self::Message) -> (Self, Option<Vec<Self::Command>>) {
     let mut next = self;
-    tracing::info!("application message received - {message:?}");
 
     match message {
-      Message::Http(costanza::server::Message::ClientDisconnected(id)) => {
+      kind @ Message::DisconnectedSerial | kind @ Message::ConnectedSerial => {
+        let serial_available = matches!(kind, Message::ConnectedSerial);
+
+        // Store the state on the application state itself. This will be used as new clients
+        // connect so they have a fresh connection value without having to rely on these messages
+        // being received.
+        next.serial_available = serial_available;
+
+        // If we have no clients to also update, we're done.
+        if next.connected_clients.is_empty() {
+          return (next, None);
+        }
+
+        let mut cmds = vec![];
+        for (id, client) in &mut next.connected_clients {
+          client.serial_available = serial_available;
+
+          match serde_json::to_string(&ResponseKinds::State(client)) {
+            Ok(payload) => {
+              cmds.push(Command::Http(costanza::effects::http::Command::SendState(
+                id.clone(),
+                payload,
+              )));
+            }
+            Err(error) => {
+              tracing::warn!("uanble to serialize client state - {error}");
+            }
+          }
+        }
+        return (next, Some(cmds));
+      }
+
+      Message::Http(costanza::effects::http::Message::ClientDisconnected(id)) => {
         tracing::info!("client {id} disconnected");
         next.connected_clients.remove(&id);
       }
 
       // When a client sends us data, we receive it as a raw string and are left to determine what
       // to do with it ourselves.
-      Message::Http(costanza::server::Message::ClientData(id, data)) => {
+      Message::Http(costanza::effects::http::Message::ClientData(id, data)) => {
         tracing::info!("handling client '{id}' data '{data}'");
 
         let parsed = match serde_json::from_str::<ClientMessage>(&data) {
@@ -129,24 +179,35 @@ impl costanza::eff::Application for Application {
         if let Some(client) = next.connected_clients.get_mut(&id) {
           let mut cmds = vec![];
 
+          // Update the "tick" that we're using based on the message provided
           tracing::info!("has parsed client data - {parsed:?}");
-          client.derived.tick = match &parsed {
+          client.tick = match &parsed {
             ClientMessage::RawSerial(inner) => {
               cmds.push(Command::Serial(SerialCommand::Raw(inner.value.clone())));
               inner.tick
             }
-            _ => client.derived.tick,
           };
-          client.history.push(parsed);
+
+          // Add this interaction to our history
+          client.history.push(ClientHistoryEntry::SentCommand(parsed));
+
+          // Create the response that we'll send back to the client.
+          let response = &ResponseKinds::Response(ClientResponse {
+            tick: client.tick,
+            status: "ok".into(),
+          });
 
           // Immediately return a command that will let our client know we have received their
           // request.
-          if let Ok(res) = serde_json::to_string(&ResponseKinds::Response(ClientResponse {
-            tick: client.derived.tick,
-            status: "ok".into(),
-          })) {
-            cmds.push(Command::Http(costanza::server::Command::SendState(id.clone(), res)));
-            return (next, Some(cmds));
+          match serde_json::to_string(&response) {
+            Ok(res) => {
+              cmds.push(Command::Http(costanza::effects::http::Command::SendState(
+                id.clone(),
+                res,
+              )));
+              return (next, Some(cmds));
+            }
+            Err(error) => tracing::warn!("unable to serialize - {error}"),
           }
         }
 
@@ -154,38 +215,74 @@ impl costanza::eff::Application for Application {
       }
 
       // When clients connect, create an entry for them.
-      Message::Http(costanza::server::Message::ClientConnected(id)) => {
+      Message::Http(costanza::effects::http::Message::ClientConnected(id)) => {
         tracing::info!("has new client, updating hash");
-        next.connected_clients.insert(id, ClientState::default());
+        // Populate this new client with the latest connection state available to us.
+        let connected_client = DerivedClientState {
+          serial_available: next.serial_available,
+          ..DerivedClientState::default()
+        };
+
+        next.connected_clients.insert(id, connected_client);
       }
-      _ => (),
-    }
 
-    if let None = next.last_home {
-      next.last_home = Some(std::time::Instant::now());
-      return (next, None);
-    }
-
-    if let Some(last_home) = next.last_home {
-      let now = std::time::Instant::now();
-
-      if now.duration_since(last_home).as_secs() > 2 {
-        next.last_home = Some(now);
+      Message::Serial(data) => {
+        tracing::info!("has serial data - {data}");
 
         if !next.connected_clients.is_empty() {
-          tracing::info!("has {} clients to send heartbeats to", next.connected_clients.len());
-
           let mut cmds = vec![];
-          for (id, client) in &next.connected_clients {
-            if let Ok(payload) = serde_json::to_string(&ResponseKinds::State(&client.derived)) {
-              cmds.push(Command::Http(costanza::server::Command::SendState(id.clone(), payload)));
+
+          // Add this serial message to all of our connected clients.
+          for (id, client) in &mut next.connected_clients {
+            client.history.push(ClientHistoryEntry::ReceivedData(ReceivedDataEntry {
+              content: data.clone(),
+            }));
+
+            match serde_json::to_string(&ResponseKinds::State(client)) {
+              Ok(payload) => {
+                let response_command = Command::Http(costanza::effects::http::Command::SendState(id.clone(), payload));
+                cmds.push(response_command);
+              }
+              Err(error) => tracing::warn!("unable to serialize payload - {error}"),
             }
           }
 
           return (next, Some(cmds));
         }
+      }
 
-        return (next, None);
+      Message::Tick => {
+        if next.last_home.is_none() {
+          next.last_home = Some(std::time::Instant::now());
+          return (next, None);
+        }
+
+        let last_home = next.last_home.unwrap();
+        let now = std::time::Instant::now();
+
+        if now.duration_since(last_home).as_secs() < 2 {
+          return (next, None);
+        }
+
+        next.last_home = Some(now);
+
+        if next.connected_clients.is_empty() {
+          return (next, None);
+        }
+
+        tracing::info!("has {} clients to send heartbeats to", next.connected_clients.len());
+        let mut cmds = vec![];
+        for (id, client) in &next.connected_clients {
+          match serde_json::to_string(&ResponseKinds::State(client)) {
+            Ok(payload) => {
+              let response_command = Command::Http(costanza::effects::http::Command::SendState(id.clone(), payload));
+              cmds.push(response_command);
+            }
+            Err(error) => tracing::warn!("unable to serialize client tick response - {error}"),
+          }
+        }
+
+        return (next, Some(cmds));
       }
     }
 
@@ -197,10 +294,7 @@ struct SerialFilter {}
 impl costanza::eff::EffectCommandFilter for SerialFilter {
   type Command = Command;
   fn sendable(&self, c: &Self::Command) -> bool {
-    match c {
-      Command::Serial(_) => true,
-      _ => false,
-    }
+    matches!(c, Command::Serial(_))
   }
 }
 
@@ -238,10 +332,7 @@ impl costanza::eff::EffectCommandFilter for HttpFilter {
   type Command = Command;
 
   fn sendable(&self, command: &Self::Command) -> bool {
-    match command {
-      Command::Http(_) => true,
-      _ => false,
-    }
+    matches!(command, Command::Http(_))
   }
 }
 
@@ -267,14 +358,14 @@ async fn run(config: Configuration) -> io::Result<()> {
   // Run all.
   runtime
     .run()
-    .race(s.run())
+    .race(s.run(|| Message::ConnectedSerial, || Message::DisconnectedSerial))
     .race(t.run(|| Message::Tick))
     .race(h.run(
       |c| match c {
         Command::Http(inner) => Some(inner),
         _ => None,
       },
-      |m| Message::Http(m),
+      Message::Http,
     ))
     .await
 }

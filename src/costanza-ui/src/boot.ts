@@ -40,17 +40,67 @@ type TElmMessage = { kind: "websocket"; payload: string } | { kind: "control" };
     const app = Elm.Main.init({ flags });
 
     let websocket: WebSocket | undefined = void 0;
+    let messageCount = 0;
+
+    // The callback that will be used when our websocket is successfully opened.
+    const open = () => {
+      app.ports.messageReceiver.send(
+        JSON.stringify({ kind: "control", connected: true })
+      );
+    };
+
+    // The callback that will be used when our websocket errors. removes callbacks.
+    const cleanup = () => {
+      messageCount = 0;
+      app.ports.messageReceiver.send(
+        JSON.stringify({ kind: "control", connected: false })
+      );
+
+      if (!websocket) {
+        return;
+      }
+
+      const temp = websocket;
+      websocket = void 0;
+
+      console.log("cleaning up websocket");
+      try {
+        temp.close();
+      } catch (error) {
+        console.warn("unable to close previous websocket");
+      }
+
+      temp.removeEventListener("open", open);
+      temp.removeEventListener("close", cleanup);
+      temp.removeEventListener("error", cleanup);
+    };
+
+    const ondata = (event: MessageEvent) => {
+      console.log(`(boot)[${messageCount}] message from server`, {
+        data: event.data,
+      });
+      messageCount += 1;
+
+      app.ports.messageReceiver.send(
+        JSON.stringify({ kind: "websocket", payload: event.data as string })
+      );
+    };
 
     // This function is responsible for connecting to, and adding our websocket event listeners
     // that will send messages into the elm runtime via its `ports`.
     function connect(url: string): void {
+      console.log("attempting to create new websocket");
       if (websocket) {
-        console.warn("closing our current websocket");
-        websocket.close();
-        websocket = void 0;
+        cleanup();
       }
 
-      websocket = new WebSocket(url);
+      try {
+        websocket = new WebSocket(url);
+      } catch (error) {
+        console.warn("Unable to establish websocket connection", error);
+        websocket = void 0;
+        return;
+      }
 
       if (!websocket) {
         console.warn("Unable to establish websocket connection");
@@ -58,25 +108,10 @@ type TElmMessage = { kind: "websocket"; payload: string } | { kind: "control" };
         return;
       }
 
-      websocket.addEventListener("open", () => {
-        app.ports.messageReceiver.send(
-          JSON.stringify({ kind: "control", connected: true })
-        );
-      });
-
-      websocket.addEventListener("close", () => {
-        app.ports.messageReceiver.send(
-          JSON.stringify({ kind: "control", connected: false })
-        );
-      });
-
-      websocket.addEventListener("message", (event) => {
-        console.log("Has message from server - ", event.data);
-
-        app.ports.messageReceiver.send(
-          JSON.stringify({ kind: "websocket", payload: event.data as string })
-        );
-      });
+      websocket.addEventListener("open", open);
+      websocket.addEventListener("close", cleanup);
+      websocket.addEventListener("error", cleanup);
+      websocket.addEventListener("message", ondata);
     }
 
     // This function is used to subscribe to messages received from elm. These will either be bound

@@ -4,8 +4,12 @@
 use super::oauth;
 use serde::{Deserialize, Serialize};
 
+/// Based on the cookie provided to our http endpoints, the `Authority` here represents what access
+/// the user should be allowed to have.
 #[derive(PartialEq)]
 pub(super) enum Authority {
+  /// Currently, only an admin/non-admin distinction is made based on Auth0 management api role
+  /// associations.
   Admin,
 }
 

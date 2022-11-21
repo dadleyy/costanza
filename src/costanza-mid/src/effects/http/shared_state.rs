@@ -4,16 +4,24 @@ use super::sec;
 use async_std::{channel, sync};
 use std::io;
 
+/// The `SharedState` here is a type that will be available to every request handler. This means
+/// that the fields on this struct should be safe to pass between threads.
 #[derive(Clone)]
 pub struct SharedState {
+  /// A reference to the configuration of the http effect runtime itself.
   pub(super) config: super::configuration::Configuration,
 
+  /// A "connection pool" of redis tcp streams that can be used.
   pub(super) redis: sync::Arc<sync::Mutex<Option<async_std::net::TcpStream>>>,
 
+  /// The top-level message channel that we can send directly into.
   pub(super) messages: channel::Sender<super::Message>,
 
+  /// A pair of channels that will be used to "register" new clients with our effect runtime from
+  /// individual websocket connections.
   pub(super) registration: channel::Sender<(String, channel::Sender<super::Command>)>,
 
+  /// The tracing span.
   pub(super) span: tracing::Span,
 }
 

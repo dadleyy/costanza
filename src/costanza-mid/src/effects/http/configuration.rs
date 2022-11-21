@@ -1,11 +1,16 @@
 use serde::Deserialize;
 
+/// The session store config
 #[derive(Deserialize, Debug, Clone)]
 pub(super) struct SessionStoreConfiguration {
+  /// A secret that will be used to sign JWT tokens.
   pub(super) jwt_secret: String,
+
+  /// The address that we can find redis at. Used for storing user data.
   pub(super) redis_addr: String,
 }
 
+/// The main configuration schema for the http effect runtime.
 #[derive(Deserialize, Debug, Clone)]
 pub struct Configuration {
   /// The address to bind our tcp stream to.
