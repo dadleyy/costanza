@@ -8,12 +8,6 @@ jobs:
   # elm ui compilation
   build-ui:
     runs-on: ubuntu-latest
-    env:
-      LOGIN_URL: https://www.krumpled.com/tracing/api/auth/start
-      LOGOUT_URL: https://www.krumpled.com/tracing/api/auth/end
-      API_ROOT: /tracing/api
-      UI_ROOT: /tracing/
-      ASSET_ROOT: /tracing/
     defaults:
       run:
         working-directory: src/costanza-ui
@@ -60,10 +54,18 @@ jobs:
         run: make release \
           VERSION=${{ steps.vars.outputs.SHA_SHORT }} \
           LOGIN_URL=${{ env.LOGIN_URL }} \
-          API_ROOT=${{ env.API_ROOT }} \
           LOGOUT_URL=${{ env.LOGOUT_URL }} \
+          API_ROOT=${{ env.API_ROOT }} \
           UI_ROOT=${{ env.UI_ROOT }} \
+          WS_URL=${{ env.WS_URL }} \
           ASSET_ROOT=${{ env.ASSET_ROOT }} \
+        env:
+          LOGIN_URL: https://www.krumpled.com/tracing/api/auth/start
+          LOGOUT_URL: https://www.krumpled.com/tracing/api/auth/end
+          API_ROOT: /tracing/api
+          UI_ROOT: /tracing/
+          WS_URL: wss://www.krumpled.com/tracing/api/ws
+          ASSET_ROOT: /tracing/
 
       # bundling + artifact generation:
       - name: "bundle - prepare"
