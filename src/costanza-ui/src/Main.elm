@@ -170,7 +170,7 @@ viewFooter model =
     Html.footer [ AT.class "footer fixed bottom-0 left-0 w-full bg-slate-800" ]
         [ Html.div [ AT.class "flex items-center px-3 py-2 border-t border-solid border-slate-800" ]
             [ Html.div [ AT.class "ml-auto" ]
-                [ Html.a [ AT.href "https://github.com/dadleyy/milton", AT.rel "noopener", AT.target "_blank" ]
+                [ Html.a [ AT.href "https://github.com/dadleyy/costanza", AT.rel "noopener", AT.target "_blank" ]
                     [ Html.text (envFromModel model |> .version) ]
                 ]
             ]

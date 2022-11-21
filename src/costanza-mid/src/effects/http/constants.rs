@@ -1,5 +1,5 @@
 /// The name of our session cookie used within our `Set-Cookie` headers.
-pub(super) const COOKIE_NAME: &str = "_milton_session";
+pub(super) const COOKIE_NAME: &str = "_costanza_session";
 
 /// When setting the cookie, these flags are used alongside the actual value.
 #[cfg(debug_assertions)]

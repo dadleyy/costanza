@@ -1,7 +1,8 @@
 {
-  "name": "milton-ui",
+  "name": "costanza",
   "version": "1.0.0",
-  "description": "node build packages for milton ui.",
+  "private": true,
+  "description": "NPM only used for some build tools. Please refer to Makefile for instructions on how to build.",
   "scripts": {
     "dev-server": "node dev-server.js",
     "tailwind": "tailwindcss",
