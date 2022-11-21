@@ -90,9 +90,9 @@ jobs:
       - name: "rustup - install"
         run: sh /tmp/install-rust.sh -y
       - name: "rustup - component add"
-        run: . /root/.cargo/env && rustup component add clippy
+        run: . $HOME/.cargo/env && rustup component add clippy
       - name: "cargo clippy"
-        run: . /root/.cargo/env && cargo clippy
+        run: . $HOME/.cargo/env && cargo clippy
 
   # rust middleware compilation
   build-mid-armv7:
