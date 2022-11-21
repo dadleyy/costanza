@@ -2,7 +2,6 @@
 
 use super::sec;
 use async_std::{channel, sync};
-use serde::Serialize;
 use std::io;
 
 #[derive(Clone)]

@@ -1,6 +1,5 @@
 use async_std::channel;
 use async_std::prelude::FutureExt;
-use serde::Serialize;
 use std::io;
 
 pub struct Http<C, M> {

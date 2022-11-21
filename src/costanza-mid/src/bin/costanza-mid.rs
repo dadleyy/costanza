@@ -26,12 +26,28 @@ enum Message {
 enum SerialCommand {
   #[allow(dead_code)]
   Ping,
+
+  Raw(String),
+}
+
+#[derive(Deserialize, Debug)]
+struct RawSerialRequest {
+  tick: u32,
+  value: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "kind")]
+#[serde(rename_all = "snake_case")]
+enum ClientMessage {
+  RawSerial(RawSerialRequest),
 }
 
 impl std::fmt::Display for SerialCommand {
   fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
     match &self {
       SerialCommand::Ping => writeln!(formatter, "hi"),
+      SerialCommand::Raw(inner) => writeln!(formatter, "{inner}"),
     }
   }
 }
@@ -53,9 +69,28 @@ impl std::fmt::Display for Command {
   }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Serialize, Debug, Default)]
+struct DerivedClientState {
+  tick: u32,
+}
+
+#[derive(Serialize, Debug, Default)]
+struct ClientResponse {
+  tick: u32,
+  status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+enum ResponseKinds<'a> {
+  State(&'a DerivedClientState),
+  Response(ClientResponse),
+}
+
+#[derive(Default)]
 struct ClientState {
-  history: Vec<(bool, String)>,
+  history: Vec<ClientMessage>,
+  derived: DerivedClientState,
 }
 
 #[derive(Default)]
@@ -77,6 +112,48 @@ impl costanza::eff::Application for Application {
         tracing::info!("client {id} disconnected");
         next.connected_clients.remove(&id);
       }
+
+      // When a client sends us data, we receive it as a raw string and are left to determine what
+      // to do with it ourselves.
+      Message::Http(costanza::server::Message::ClientData(id, data)) => {
+        tracing::info!("handling client '{id}' data '{data}'");
+
+        let parsed = match serde_json::from_str::<ClientMessage>(&data) {
+          Err(error) => {
+            tracing::warn!("unable to parse client data - {error}");
+            return (next, None);
+          }
+          Ok(p) => p,
+        };
+
+        if let Some(client) = next.connected_clients.get_mut(&id) {
+          let mut cmds = vec![];
+
+          tracing::info!("has parsed client data - {parsed:?}");
+          client.derived.tick = match &parsed {
+            ClientMessage::RawSerial(inner) => {
+              cmds.push(Command::Serial(SerialCommand::Raw(inner.value.clone())));
+              inner.tick
+            }
+            _ => client.derived.tick,
+          };
+          client.history.push(parsed);
+
+          // Immediately return a command that will let our client know we have received their
+          // request.
+          if let Ok(res) = serde_json::to_string(&ResponseKinds::Response(ClientResponse {
+            tick: client.derived.tick,
+            status: "ok".into(),
+          })) {
+            cmds.push(Command::Http(costanza::server::Command::SendState(id.clone(), res)));
+            return (next, Some(cmds));
+          }
+        }
+
+        tracing::warn!("unable to fiend client id {id}");
+      }
+
+      // When clients connect, create an entry for them.
       Message::Http(costanza::server::Message::ClientConnected(id)) => {
         tracing::info!("has new client, updating hash");
         next.connected_clients.insert(id, ClientState::default());
@@ -99,11 +176,10 @@ impl costanza::eff::Application for Application {
           tracing::info!("has {} clients to send heartbeats to", next.connected_clients.len());
 
           let mut cmds = vec![];
-          for (id, _client) in &next.connected_clients {
-            cmds.push(Command::Http(costanza::server::Command::SendState(
-              id.clone(),
-              "".to_string(),
-            )));
+          for (id, client) in &next.connected_clients {
+            if let Ok(payload) = serde_json::to_string(&ResponseKinds::State(&client.derived)) {
+              cmds.push(Command::Http(costanza::server::Command::SendState(id.clone(), payload)));
+            }
           }
 
           return (next, Some(cmds));

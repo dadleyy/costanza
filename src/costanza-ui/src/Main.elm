@@ -7,6 +7,7 @@ import Html
 import Html.Attributes as AT
 import Html.Events as EV
 import Http
+import Icon
 import Json.Decode as JD
 import Json.Encode as JE
 import Task
@@ -49,6 +50,7 @@ type Request
 type alias HomePage =
     { lastRequest : Request
     , currentInput : String
+    , connected : Bool
     , tick : Int
     }
 
@@ -72,6 +74,13 @@ type Message
     | WebsocketMessage String
     | AttemptSend String
     | Tick Time.Posix
+
+
+type alias WebsocketResponse =
+    { kind : String
+    , connected : Maybe Bool
+    , payload : Maybe String
+    }
 
 
 port sendMessage : String -> Cmd msg
@@ -161,7 +170,40 @@ update message model =
             ( model, Cmd.none )
 
         WebsocketMessage rawMessage ->
-            ( model, Cmd.none )
+            let
+                parsed =
+                    parseMessage rawMessage
+
+                ( newModel, cmd ) =
+                    case ( parsed, model ) of
+                        ( Ok res, Authorized (Home home) _ session ) ->
+                            let
+                                connected =
+                                    case ( res.kind == "control", res.connected ) of
+                                        ( True, Just True ) ->
+                                            True
+
+                                        ( True, Nothing ) ->
+                                            False
+
+                                        ( True, Just False ) ->
+                                            False
+
+                                        ( False, _ ) ->
+                                            home.connected
+
+                                newHome =
+                                    { home | lastRequest = Done (Ok ()), connected = connected }
+                            in
+                            ( Authorized (Home newHome) env session, Cmd.none )
+
+                        ( Err _, Authorized (Home home) _ session ) ->
+                            ( model, Cmd.none )
+
+                        _ ->
+                            ( model, Cmd.none )
+            in
+            ( newModel, cmd )
 
 
 view : Model -> Browser.Document Message
@@ -196,13 +238,18 @@ modelFromSessionPayload : Environment -> SessionPayload -> ( Model, Cmd Message 
 modelFromSessionPayload env payload =
     case payload.ok of
         True ->
-            ( Maybe.map (Authorized (Home { lastRequest = NotAsked, currentInput = "", tick = 0 }) env) payload.session.user
+            ( Maybe.map (Authorized (Home emptyHome) env) payload.session.user
                 |> Maybe.withDefault (Unauthorized env)
             , startWebsocket
             )
 
         False ->
             ( Unauthorized env, Cmd.none )
+
+
+emptyHome : HomePage
+emptyHome =
+    { lastRequest = NotAsked, tick = 0, connected = False, currentInput = "" }
 
 
 getAuthURL : Model -> String
@@ -292,12 +339,30 @@ viewPage : Page -> Environment -> SessionUserData -> Html.Html Message
 viewPage page env session =
     case page of
         Home homePage ->
+            let
+                isDisabled =
+                    homePage.connected == False || homePage.lastRequest == Pending
+            in
             Html.div [ AT.class "pt-8 flex items-center flex-col w-full h-full" ]
                 [ Html.div [ AT.class "flex items-center w-full px-8" ]
-                    [ Html.input [ AT.type_ "text", AT.class "mr-3 flex-1", AT.value homePage.currentInput, EV.onInput UpdateHomeInput ] []
+                    [ Html.div [ AT.class "mr-4" ]
+                        [ if homePage.connected then
+                            Icon.view Icon.Wifi
+
+                          else
+                            Icon.view Icon.Exclamation
+                        ]
+                    , Html.input
+                        [ AT.type_ "text"
+                        , AT.class "mr-3 flex-1"
+                        , AT.value homePage.currentInput
+                        , EV.onInput UpdateHomeInput
+                        , AT.disabled isDisabled
+                        ]
+                        []
                     , Button.view
                         ( Button.Icon Button.Plane (AttemptSend homePage.currentInput)
-                        , if String.isEmpty homePage.currentInput || homePage.lastRequest == Pending then
+                        , if String.isEmpty homePage.currentInput || isDisabled then
                             Button.Disabled
 
                           else
@@ -347,3 +412,18 @@ sendInputMessage input tick =
             JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 payload) ) ]
     in
     sendMessage (JE.encode 0 values)
+
+
+decoder : JD.Decoder WebsocketResponse
+decoder =
+    JD.map3 WebsocketResponse
+        (JD.field "kind" JD.string)
+        (JD.maybe (JD.field "connected" JD.bool))
+        (JD.maybe (JD.field "payload" JD.string))
+
+
+parseMessage : String -> Result JD.Error WebsocketResponse
+parseMessage inner =
+    JD.decodeString
+        decoder
+        inner

@@ -13,7 +13,7 @@ mod utils;
 
 pub use configuration::Configuration;
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Command {
   SendState(String, String),
 }
@@ -21,6 +21,7 @@ pub enum Command {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Message {
   ClientConnected(String),
+  ClientData(String, String),
   ClientDisconnected(String),
 }
 
@@ -117,14 +118,24 @@ async fn ws(
     };
 
     match client_input.race(application_input).await {
-      Ok(Some(FrameResult::Command(command))) => {
-        if let Err(error) = connection.send_json(&command).await {
+      Ok(Some(FrameResult::Message(data))) => {
+        if let Err(error) = request
+          .state()
+          .messages
+          .send(Message::ClientData(id.clone(), data))
+          .await
+        {
+          tracing::warn!("unable to send client data though message channel - {error}");
+          break;
+        }
+      }
+      Ok(Some(FrameResult::Command(Command::SendState(_, data)))) => {
+        if let Err(error) = connection.send_string(data).await {
           tracing::warn!("unable to send serialized command to client - {error}");
           break;
         }
       }
-      Ok(Some(_)) => tracing::info!("todo"),
-      Ok(None) => tracing::info!("todo"),
+      Ok(None) => tracing::debug!("todo"),
       Err(error) => {
         tracing::warn!("invalid client websocket interval - {error}");
         break;
@@ -206,7 +217,6 @@ impl ServerRuntime {
                   }
                 }
               }
-              _ => (),
             }
 
             Ok(())

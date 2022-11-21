@@ -79,6 +79,13 @@ button:disabled {
   @apply rounded-sm;
 }
 
+input[type="text"]:disabled {
+  @apply block;
+  @apply bg-slate-800;
+  @apply text-slate-100;
+  opacity: 0.5;
+}
+
 input[type="text"]:not(:disabled) {
   @apply block;
   @apply bg-slate-800;
