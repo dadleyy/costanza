@@ -16,7 +16,7 @@ fn main() -> io::Result<()> {
     let mut buffer = [0u8; 1024];
 
     if now.duration_since(last_status).as_secs() > 5 {
-      last_status = now.clone();
+      last_status = now;
 
       if let Err(error) = io::Write::write(&mut main, b"status...\n") {
         println!("unable to write status - {error}");

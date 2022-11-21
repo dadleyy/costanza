@@ -80,6 +80,13 @@ jobs:
           name: costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
           path: src/costanza-ui/costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
 
+  build-mid-latest:
+    runs-on: rust:1.65
+    steps:
+      - uses: actions/checkout@v3
+      - name: "rustup - component add"
+        run: rustup component add clippy
+
   # rust middleware compilation
   build-mid-armv7:
     runs-on: ubuntu-latest

@@ -1,11 +1,18 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use futures_lite::future::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::io;
 
+/// The configuration we will load from the filesystem is an amalgamation of internal
+/// configurations for the various effect systems.
 #[derive(Deserialize, Debug)]
 struct Configuration {
+  /// The configuration used by our http server.
   http: costanza::server::Configuration,
+
+  /// The configuration used by the serial connection.
   serial: Option<costanza::effects::serial::SerialConfiguration>,
 }
 
@@ -135,7 +142,6 @@ impl costanza::eff::Application for Application {
               cmds.push(Command::Serial(SerialCommand::Raw(inner.value.clone())));
               inner.tick
             }
-            _ => client.derived.tick,
           };
           client.history.push(parsed);
 
@@ -161,7 +167,7 @@ impl costanza::eff::Application for Application {
       _ => (),
     }
 
-    if let None = next.last_home {
+    if next.last_home.is_none() {
       next.last_home = Some(std::time::Instant::now());
       return (next, None);
     }
@@ -197,10 +203,7 @@ struct SerialFilter {}
 impl costanza::eff::EffectCommandFilter for SerialFilter {
   type Command = Command;
   fn sendable(&self, c: &Self::Command) -> bool {
-    match c {
-      Command::Serial(_) => true,
-      _ => false,
-    }
+    matches!(c, Command::Serial(_))
   }
 }
 
@@ -238,10 +241,7 @@ impl costanza::eff::EffectCommandFilter for HttpFilter {
   type Command = Command;
 
   fn sendable(&self, command: &Self::Command) -> bool {
-    match command {
-      Command::Http(_) => true,
-      _ => false,
-    }
+    matches!(command, Command::Http(_))
   }
 }
 
@@ -274,7 +274,7 @@ async fn run(config: Configuration) -> io::Result<()> {
         Command::Http(inner) => Some(inner),
         _ => None,
       },
-      |m| Message::Http(m),
+      Message::Http,
     ))
     .await
 }
