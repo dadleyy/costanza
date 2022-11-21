@@ -22,3 +22,6 @@ run cd /etc/arm-dependencies && wget -O openssl-3.0.7.tar.gz https://www.openssl
 run cd /etc/arm-dependencies && tar xvzf openssl-3.0.7.tar.gz
 run cd /etc/arm-dependencies/openssl-3.0.7 && MACHINE=armv7 CC=arm-linux-gnueabihf-gcc ARCH=arm ./Configure linux-generic64 shared
 run cd /etc/arm-dependencies/openssl-3.0.7 && MACHINE=armv7 CC=arm-linux-gnueabihf-gcc ARCH=arm make
+run chsh -s /bin/bash root
+run echo "source /root/.cargo/env" > /root/.bash_profile
+entrypoint ["/bin/bash"]
