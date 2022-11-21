@@ -1,0 +1,166 @@
+name: all
+on:
+  push:
+  create:
+    tags:
+      - v*
+jobs:
+  # elm ui compilation
+  build-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/costanza-ui
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+
+      - name: "set output: short_sha"
+        id: vars
+        run: echo "SHA_SHORT=$(echo $GITHUB_SHA | head -c 7)">>$GITHUB_OUTPUT
+      - name: "set output: verify"
+        run: echo "${{ steps.vars.outputs.SHA_SHORT }}"
+
+      - name: "apt update"
+        run: sudo apt-get update
+
+      - name: "build-deps - xsltproc"
+        run: sudo apt-get install xsltproc -y
+
+      - name: "build-deps - elm download"
+        run: curl -L -l -o elm.gz https://github.com/elm/compiler/releases/download/0.19.1/binary-for-linux-64-bit.gz
+
+      - name: "build-deps - elm unpack"
+        run: gunzip elm.gz && chmod +x elm
+
+      - name: "build-deps - elm install"
+        run: sudo mv elm /usr/local/bin/
+
+      - name: "build-deps - elm version"
+        run: elm --version
+
+      - name: "build-deps - node deps"
+        run: npm i
+
+      - name: "lint - ts"
+        run: npm run lint:js
+
+      - name: "lint - elm"
+        run: npm run lint:elm -- --validate
+
+      - name: "build - make release"
+        run: make release \
+          VERSION=${{ steps.vars.outputs.SHA_SHORT }} \
+          LOGIN_URL=${{ env.LOGIN_URL }} \
+          LOGOUT_URL=${{ env.LOGOUT_URL }} \
+          API_ROOT=${{ env.API_ROOT }} \
+          UI_ROOT=${{ env.UI_ROOT }} \
+          WS_URL=${{ env.WS_URL }} \
+          ASSET_ROOT=${{ env.ASSET_ROOT }} \
+        env:
+          LOGIN_URL: https://www.krumpled.com/tracing/api/auth/start
+          LOGOUT_URL: https://www.krumpled.com/tracing/api/auth/end
+          API_ROOT: /tracing/api
+          UI_ROOT: /tracing/
+          WS_URL: wss://www.krumpled.com/tracing/api/ws
+          ASSET_ROOT: /tracing/
+
+      # bundling + artifact generation:
+      - name: "bundle - prepare"
+        run: mkdir -p costanza-ui-dist
+      - name: "bundle - populate"
+        run: cp -r target/release costanza-ui-dist
+      - name: "bundle - create"
+        run: tar cvzf costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz costanza-ui-dist
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
+          path: src/costanza-ui/costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
+
+  # rust middleware compilation
+  build-mid-armv7:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: dadleyy/ubuntu-bionic-cross-compiler:latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: "set output: verify git version"
+        run: git --version
+
+      - name: "set output: short_sha"
+        id: vars
+        run: echo "SHA_SHORT=$(echo $GITHUB_SHA | head -c 7)">>$GITHUB_OUTPUT
+      - name: "set output: verify"
+        run: echo "${{ steps.vars.outputs.SHA_SHORT }}"
+
+      - name: "apt - update"
+        run: apt-get update
+      - name: "apt - install libudev-dev"
+        run: apt-get install libudev-dev pkg-config clang -y
+
+      - name: "rustup - download"
+        run: curl --output /tmp/install-rust.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
+
+      - name: "rustup - install"
+        run: sh /tmp/install-rust.sh -y
+      - name: "rustup - target add"
+        run: . /root/.cargo/env && rustup target add armv7-unknown-linux-gnueabihf
+      - name: "rustup - component add"
+        run: . /root/.cargo/env && rustup component add --target armv7-unknown-linux-gnueabihf rust-src rust-std rustc-dev
+
+      # main application compliation:
+      - name: "cargo - whoami"
+        run: "whoami"
+
+      - name: "cargo - build"
+        run: ". /root/.cargo/env && cargo build --target armv7-unknown-linux-gnueabihf --release --no-default-features"
+        env:
+          PKG_CONFIG_SYSROOT_DIR: /usr/arm-linux-gnueabihf
+          OPENSSL_LIB_DIR: /etc/arm-dependencies/openssl-3.0.7
+          OPENSSL_INCLUDE_DIR: /etc/arm-dependencies/openssl-3.0.7/include
+          COSTANZA_VERSION: "${{ steps.vars.outputs.SHA_SHORT }}"
+
+      # bundling + artifact generation:
+      - name: "bundle - prepare"
+        run: mkdir -p costanza-mid-dist/bin
+      - name: "bundle - populate"
+        run: cp target/armv7-unknown-linux-gnueabihf/release/costanza-m costanza-mid-dist/bin/costanza-m
+      - name: "bundle - create"
+        run: tar cvzf costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz costanza-mid-dist
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
+          path: costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: ["build-ui", "build-mid-armv7"]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: "set output: short_sha"
+        id: vars
+        run: echo "SHA_SHORT=$(echo $GITHUB_SHA | head -c 7)">>$GITHUB_OUTPUT
+      - name: "set output: verify"
+        run: echo "${{ steps.vars.outputs.SHA_SHORT }}"
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: "costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz"
+      - uses: actions/download-artifact@v3
+        with:
+          name: "costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz"
+      - name: release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: "./*.tar.gz"
+          generate_release_notes: true

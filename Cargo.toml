@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "src/costanza-mid"
+]
+
+[patch.crates-io]
+serialport = { git = "https://github.com/mf-dhadley/serialport-rs.git", branch = "unpin-version" }
