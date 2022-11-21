@@ -81,11 +81,18 @@ jobs:
           path: src/costanza-ui/costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
 
   build-mid-latest:
-    runs-on: rust:1.65
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
+      - name: "rustup - download"
+        run: curl --output /tmp/install-rust.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
+      - name: "rustup - install"
+        run: sh /tmp/install-rust.sh -y
       - name: "rustup - component add"
-        run: rustup component add clippy
+        run: . /root/.cargo/env && rustup component add clippy
+      - name: "cargo clippy"
+        run: . /root/.cargo/env && cargo clippy
 
   # rust middleware compilation
   build-mid-armv7:
