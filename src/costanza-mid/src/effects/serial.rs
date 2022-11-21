@@ -50,8 +50,13 @@ where
     self.config_channel.0.clone()
   }
 
-  pub async fn run(mut self) -> io::Result<()> {
+  pub async fn run<N, D>(mut self, connected: N, disconnected: D) -> io::Result<()>
+  where
+    N: Fn() -> M,
+    D: Fn() -> M,
+  {
     let mut port = None;
+    let mut is_connected = false;
 
     loop {
       match self.config_channel.1.try_recv() {
@@ -70,13 +75,22 @@ where
           let new_port = serialport::new(&config.device, config.baud)
             .open()
             .map_err(|error| {
-              tracing::warn!("unable to open port - {error}");
+              tracing::warn!("unable to open {:?} port - {error}", config);
               error
             })
             .ok();
 
           if new_port.is_some() {
             tracing::info!("established new connection to our serial port");
+
+            if !is_connected {
+              is_connected = true;
+
+              self.messages.0.send(connected()).await.map_err(|error| {
+                tracing::warn!("unable to send connected message - {error}");
+                io::Error::new(io::ErrorKind::Other, format!("serial-send failure: {error}"))
+              })?;
+            }
           }
 
           new_port
@@ -87,6 +101,15 @@ where
 
       if port.is_none() {
         async_std::task::sleep(std::time::Duration::from_secs(2)).await;
+
+        if is_connected {
+          is_connected = false;
+          self.messages.0.send(disconnected()).await.map_err(|error| {
+            tracing::warn!("unable to send disconnect message - {error}");
+            io::Error::new(io::ErrorKind::Other, format!("serial-send failure: {error}"))
+          })?;
+        }
+
         continue;
       }
 

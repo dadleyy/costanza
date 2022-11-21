@@ -11,7 +11,7 @@
   <xsl:template match="page">
     <html>
       <head>
-        <title>milton</title>
+        <title>costanza</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css" />
         <link rel="stylesheet" href="{$assetRoot}main.css?v={$version}" />
 
@@ -28,7 +28,7 @@
         <link rel="icon" type="image/png" sizes="16x16" href="{$assetRoot}favicon-16x16.png" />
 
         <meta property="og:image" content="{$assetRoot}art-350x350.png" />
-        <meta property="og:title" content="milton printer control center" />
+        <meta property="og:title" content="costanza printer control center" />
 
         <meta name="version" content="{$version}" />
         <meta name="apiRoot" content="{$apiRoot}" />
