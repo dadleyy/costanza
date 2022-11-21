@@ -120,7 +120,7 @@ update message home =
 
                 -- TODO: we were unable to parse a websocket message.
                 Err error ->
-                    ( { home | lastError = Just (Debug.toString error) }, Cmd.none )
+                    ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
 
         AttemptSend payload ->
             ( consumeInput home payload, sendInputMessage payload home.tick )
@@ -265,4 +265,4 @@ handleInnerWebsocketMessage home message =
             ( { home | history = state.history, connection = nextConnection }, Cmd.none )
 
         Err error ->
-            ( { home | lastError = Just (Debug.toString error) }, Cmd.none )
+            ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
