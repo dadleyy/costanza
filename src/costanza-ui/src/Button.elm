@@ -11,6 +11,7 @@ type ButtonIcon
     | CircleDot
     | Plane
     | Video
+    | File
     | Camera
 
 
@@ -31,6 +32,15 @@ type ButtonVariant
     | Secondary
     | Warning
     | RGB RGBColor
+
+
+disabledOr : Bool -> ButtonVariant -> ButtonVariant
+disabledOr isDisabled other =
+    if isDisabled then
+        Disabled
+
+    else
+        other
 
 
 view : ( Button a, ButtonVariant ) -> Html.Html a
@@ -93,6 +103,9 @@ iconClass kind =
 
         Camera ->
             "fa-solid fa-camera"
+
+        File ->
+            "fa-solid fa-file"
 
         CircleDot ->
             "fa-solid fa-circle-dot"

@@ -19,6 +19,7 @@ path = "src/bin/mock-grbl.rs"
 async-std = { version = "1.12.0", features = ["attributes", "unstable"] }
 chrono = { version = "0.4.23", features = ["serde"] }
 clap = { version = "4.0.26", features = ["derive", "cargo"] }
+dotenv = "0.15.0"
 futures = "0.3.25"
 futures-lite = "1.12.0"
 jsonwebtoken = "8.1.1"
@@ -30,6 +31,6 @@ surf = "2.3.2"
 tide = "0.16.0"
 tide-websockets = "0.4.0"
 toml = "0.5.9"
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tracing = { version = "^0.1.37" }
+tracing-subscriber = { version = "^0.3.16", features = ["env-filter", "std", "fmt"] }
 uuid = { version = "1.2.2", features = ["v4"] }

@@ -11,6 +11,9 @@ use std::io;
 /// The `auth_routes` module defines the routes responsible for authenticating users.
 mod auth_routes;
 
+/// The `file_routes` deals with uploading files.
+mod file_routes;
+
 /// Contains configuration structure.
 mod configuration;
 
@@ -50,6 +53,9 @@ pub enum Message {
   /// A message that will be sent to the concrete application runtime containing a client id and
   /// any data that was received by that client.
   ClientData(String, String),
+
+  /// When a file is uploaded, we will...
+  FileUpload(String),
 
   /// A message that will be sent to the concrete application runtime containing a client id.
   ClientDisconnected(String),
@@ -356,6 +362,7 @@ impl ServerRuntime {
     app.at("/auth/end").get(auth_routes::end);
     app.at("/auth/complete").get(auth_routes::complete);
     app.at("/auth/identify").get(auth_routes::identify);
+    app.at("/upload").post(file_routes::upload);
 
     // Our proxy task/future here is responsible for managing the mapping of client ids with a
     // channel that can be used to send them `Command`s.

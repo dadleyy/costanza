@@ -71,7 +71,7 @@ update message model =
         ( HomeMessage inner, Authorized (Home homePage) _ session ) ->
             let
                 ( nextHome, cmd ) =
-                    HomePage.update inner homePage
+                    HomePage.update inner ( homePage, env )
             in
             ( Authorized (Home nextHome) env session, cmd |> Cmd.map HomeMessage )
 
@@ -81,7 +81,7 @@ update message model =
         ( Tick posixValue, Authorized (Home homePage) _ session ) ->
             let
                 ( nextHome, cmd ) =
-                    HomePage.update (HomePage.Tick posixValue) homePage
+                    HomePage.update (HomePage.Tick posixValue) ( homePage, env )
             in
             ( Authorized (Home nextHome) env session, cmd |> Cmd.map HomeMessage )
 
@@ -106,7 +106,7 @@ update message model =
         ( WebsocketMessage rawMessage, Authorized (Home homePage) _ session ) ->
             let
                 ( nextHome, cmd ) =
-                    HomePage.update (HomePage.RawWebsocket rawMessage) homePage
+                    HomePage.update (HomePage.RawWebsocket rawMessage) ( homePage, env )
             in
             ( Authorized (Home nextHome) env session, cmd |> Cmd.map HomeMessage )
 
