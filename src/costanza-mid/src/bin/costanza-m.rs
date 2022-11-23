@@ -53,6 +53,8 @@ enum Message {
 enum SerialCommand {
   #[allow(dead_code)]
   Raw(String),
+
+  Status,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -71,6 +73,7 @@ impl std::fmt::Display for SerialCommand {
   fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
     match &self {
       SerialCommand::Raw(inner) => writeln!(formatter, "{inner}"),
+      SerialCommand::Status => writeln!(formatter, "?"),
     }
   }
 }
@@ -372,7 +375,7 @@ impl costanza::eff::Application for Application {
           if is_old {
             tracing::info!("sending new ping to serial");
             next.serial = SerialConnectionState::Idle(Some(now));
-            cmds.push(Command::Serial(SerialCommand::Raw("$i".to_string())));
+            cmds.push(Command::Serial(SerialCommand::Status));
           }
         }
 

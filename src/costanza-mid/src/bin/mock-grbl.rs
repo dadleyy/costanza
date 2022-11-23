@@ -9,14 +9,79 @@ use serialport::SerialPort;
 use std::io;
 use std::io::Write;
 
+#[derive(Debug)]
+enum Message<'a> {
+  Command(&'a str),
+  Tick(std::time::Instant),
+}
+
+#[derive(Default, Debug)]
+enum MovementState {
+  #[default]
+  Idle,
+  Moving(std::time::Instant),
+}
+
+impl std::fmt::Display for MovementState {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    match self {
+      MovementState::Idle => write!(formatter, "Idle"),
+      MovementState::Moving(_) => write!(formatter, "Run"),
+    }
+  }
+}
+
+#[derive(Debug, Default)]
+struct Machine {
+  last_tick: Option<std::time::Instant>,
+  movement: MovementState,
+  mpos: (i32, i32, i32),
+  wpos: (i32, i32, i32),
+}
+
+impl Machine {
+  fn update<'a>(&mut self, message: Message<'a>) -> io::Result<Option<String>> {
+    match message {
+      Message::Command(utf8_str) => match utf8_str {
+        "?" => {
+          println!("returning status info");
+          let (mx, my, mz) = &self.mpos;
+          let (wx, wy, wz) = &self.wpos;
+          let status = format!("<{},MPos:{mx},{my},{mz},WPos:{wx},{wy},{wz}>", self.movement);
+          return Ok(Some(status));
+        }
+        cmd => {
+          println!("unknown command ({cmd})");
+          let end_at = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(2))
+            .expect("time problem");
+          self.movement = MovementState::Moving(end_at);
+          return Ok(Some("ok".into()));
+        }
+      },
+      Message::Tick(time) => {
+        self.last_tick = Some(time);
+
+        if let MovementState::Moving(terminate_at) = self.movement {
+          if terminate_at < time {
+            self.movement = MovementState::Idle;
+          }
+        }
+      }
+    }
+
+    Ok(None)
+  }
+}
+
 fn main() -> io::Result<()> {
   loop {
     let (mut main, secondary) = serialport::TTYPort::pair()?;
     println!("main[{:?}] secondary[{:?}]", main.name(), secondary.name());
     let mut tick = 0u32;
-    let mut last_status = std::time::Instant::now();
     let mut last_debug = std::time::Instant::now();
     let mut last_read = std::time::Instant::now();
+    let mut machine = Machine::default();
 
     main.set_exclusive(false)?;
 
@@ -46,24 +111,22 @@ fn main() -> io::Result<()> {
 
       tick += 1;
       let mut buffer = [0u8; 1024];
-
-      if now.duration_since(last_status).as_secs() > 2 {
-        last_status = now;
-
-        if let Err(error) = writeln!(&mut main, "status") {
-          println!("unable to write status - {error}");
-          break;
-        }
-      }
-
       match io::Read::read(&mut main, &mut buffer) {
         Ok(amount) => {
           let parsed = std::str::from_utf8(&buffer[0..amount]);
           println!("read {} bytes - {parsed:?}", amount);
-          writeln!(&mut main, "ok").expect("failed writing response");
+
+          if let Ok(valid_utf8) = parsed {
+            if let Some(response) = machine.update(Message::Command(valid_utf8.trim_end()))? {
+              writeln!(&mut main, "{response}").expect("failed writing response");
+            }
+          }
+
           last_read = std::time::Instant::now();
         }
-        Err(error) if error.kind() == io::ErrorKind::TimedOut => continue,
+        Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+          machine.update(Message::Tick(std::time::Instant::now()))?;
+        }
         Err(error) => {
           println!("unable to read - {error}");
           break;
