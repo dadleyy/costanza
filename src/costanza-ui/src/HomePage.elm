@@ -2,6 +2,8 @@ module HomePage exposing (..)
 
 import Boot
 import Button
+import Environment as Env
+import File
 import Html
 import Html.Attributes as AT
 import Html.Events as EV
@@ -37,6 +39,9 @@ type HomeConnectionState
 
 type Message
     = AttemptSend String
+    | Noop
+    | FileUploadResult (Result Http.Error ())
+    | GotFiles (List File.File)
     | UpdateHomeInput String
     | KeyDown Int
     | RawWebsocket String
@@ -63,9 +68,32 @@ init =
     }
 
 
-update : Message -> HomePage -> ( HomePage, Cmd Message )
-update message home =
+uploadUrl : Env.Environment -> String
+uploadUrl env =
+    env.apiRoot ++ "/upload"
+
+
+upload : Env.Environment -> File.File -> Cmd Message
+upload env file =
+    Http.post { body = Http.fileBody file, expect = Http.expectWhatever FileUploadResult, url = uploadUrl env }
+
+
+update : Message -> ( HomePage, Env.Environment ) -> ( HomePage, Cmd Message )
+update message ( home, env ) =
     case message of
+        FileUploadResult _ ->
+            ( home, Cmd.none )
+
+        GotFiles list ->
+            let
+                cmds =
+                    List.map (upload env) list
+            in
+            ( home, Cmd.batch cmds )
+
+        Noop ->
+            ( home, Cmd.none )
+
         KeyDown 13 ->
             ( consumeInput home home.currentInput
             , sendInputMessage home.currentInput home.tick
@@ -150,7 +178,12 @@ view : HomePage -> Html.Html Message
 view homePage =
     let
         isDisabled =
-            homePage.connection == Disconnected || homePage.lastRequest == Pending
+            homePage.connection
+                == Disconnected
+                || homePage.lastRequest
+                == Pending
+                || homePage.connection
+                == Websocket False
     in
     Html.div [ AT.class "pt-8 flex items-center flex-col w-full h-full" ]
         [ case homePage.lastError of
@@ -182,12 +215,21 @@ view homePage =
                 []
             , Button.view
                 ( Button.Icon Button.Plane (AttemptSend homePage.currentInput)
-                , if String.isEmpty homePage.currentInput || isDisabled then
-                    Button.Disabled
-
-                  else
-                    Button.Primary
+                , Button.disabledOr (String.isEmpty homePage.currentInput || isDisabled) Button.Primary
                 )
+            , Html.div [ AT.class "ml-4 relative" ]
+                [ Html.label [ AT.class "relative block" ]
+                    [ Html.input
+                        [ AT.class "absolute w-full h-full inset-0 opacity-0"
+                        , AT.type_ "file"
+                        , AT.disabled isDisabled
+                        , AT.accept "text/x.gcode, text"
+                        , EV.on "change" (JD.map GotFiles filesDecoder)
+                        ]
+                        []
+                    , Button.view ( Button.Icon Button.File Noop, Button.disabledOr isDisabled Button.Secondary )
+                    ]
+                ]
             ]
         , Html.div [ AT.class "w-full flex-1 px-8 mt-4" ]
             [ Html.div [ AT.class "code-container w-full" ]
@@ -266,3 +308,8 @@ handleInnerWebsocketMessage home message =
 
         Err error ->
             ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
+
+
+filesDecoder : JD.Decoder (List File.File)
+filesDecoder =
+    JD.at [ "target", "files" ] (JD.list File.decoder)

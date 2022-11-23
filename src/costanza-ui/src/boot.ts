@@ -32,9 +32,11 @@ declare const Elm: ElmRuntime<Flags, Ports>;
 const enum MessageKinds {
   WEBSOCKET = "websocket",
   CONTROL = "control",
-};
+}
 
-type TElmMessage = { kind: MessageKinds.WEBSOCKET; payload: string } | { kind: MessageKinds.CONTROL };
+type TElmMessage =
+  | { kind: MessageKinds.WEBSOCKET; payload: string }
+  | { kind: MessageKinds.CONTROL };
 
 (function () {
   function metaValue(metaName: string): string | undefined {

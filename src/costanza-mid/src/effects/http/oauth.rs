@@ -43,7 +43,7 @@ pub struct ManagementTokenResponse {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ManagementUserInfoResponse {
   name: Option<String>,
-  user_id: String,
+  pub(crate) user_id: String,
   picture: Option<String>,
   email: Option<String>,
   nickname: Option<String>,
