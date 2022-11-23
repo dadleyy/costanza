@@ -1,6 +1,7 @@
 [workspace]
 members = [
-  "src/costanza-mid"
+  "src/costanza-mid",
+  "src/costanza-eui"
 ]
 
 [patch.crates-io]
