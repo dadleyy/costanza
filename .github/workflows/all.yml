@@ -117,7 +117,7 @@ jobs:
       - name: "apt - update"
         run: apt-get update
       - name: "apt - install things"
-        run: apt-get install libssl-dev:armhf
+        run: apt-get install libssl-dev:armhf -y
 
       - name: "cargo - build"
         run: ". /root/.cargo/env && cargo build --target armv7-unknown-linux-gnueabihf --release --no-default-features"
