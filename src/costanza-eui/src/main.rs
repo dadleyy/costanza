@@ -2,6 +2,9 @@ use iced::widget::{button, column, text};
 use iced::{Alignment, Element, Sandbox, Settings};
 
 pub fn main() -> iced::Result {
+  if let Err(error) = dotenv::dotenv() {
+    eprintln!("unable to load '.env' - {error}");
+  }
   let mut settings = Settings::default();
   settings.window.size = (480, 272);
   settings.window.resizable = false;

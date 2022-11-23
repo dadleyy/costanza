@@ -6,3 +6,4 @@ members = [
 
 [patch.crates-io]
 serialport = { git = "https://github.com/mf-dhadley/serialport-rs.git", branch = "unpin-version" }
+glutin = { git = "https://github.com/dadleyy/glutin.git", branch = "pixelformat-changes" }

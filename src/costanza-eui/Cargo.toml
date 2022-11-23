@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 iced = { version = "0.5.2", features = ["glow"], default-features = false }
+dotenv = { version = "^0.15" }

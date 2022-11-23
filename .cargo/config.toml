@@ -1,7 +1,7 @@
 [alias]
 mid = "run --bin costanza-m"
 mock = "run --bin mock-grbl"
-
+ui = "run --bin costanza-eui"
 
 [target.armv7-unknown-linux-gnueabihf]
 linker = "arm-linux-gnueabihf-gcc"
