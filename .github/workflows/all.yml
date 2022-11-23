@@ -117,7 +117,7 @@ jobs:
       - name: "apt - update"
         run: apt-get update
       - name: "apt - install libudev-dev"
-        run: apt-get install libudev-dev pkg-config clang libfontconfig1-dev cmake -y
+        run: apt-get install libudev-dev pkg-config clang libfontconfig1-dev cmake libz-dev -y
 
       - name: "rustup - download"
         run: curl --output /tmp/install-rust.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
