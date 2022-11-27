@@ -3,16 +3,11 @@ module Button exposing (..)
 import Html
 import Html.Attributes as AT
 import Html.Events as EV
+import Icon
 
 
-type ButtonIcon
-    = LightOn
-    | LightOff
-    | CircleDot
-    | Plane
-    | Video
-    | File
-    | Camera
+type alias ButtonIcon =
+    Icon.Icon
 
 
 type Button a
@@ -88,30 +83,5 @@ view kind =
                     , EV.onClick message
                     , AT.disabled isDisabled
                     ]
-                    [ Html.i [ AT.class (iconClass ico) ] [] ]
+                    [ Html.i [ AT.class (Icon.iconClass ico) ] [] ]
         ]
-
-
-iconClass : ButtonIcon -> String
-iconClass kind =
-    case kind of
-        Video ->
-            "fa-solid fa-video"
-
-        Plane ->
-            "fa-solid fa-paper-plane"
-
-        Camera ->
-            "fa-solid fa-camera"
-
-        File ->
-            "fa-solid fa-file"
-
-        CircleDot ->
-            "fa-solid fa-circle-dot"
-
-        LightOn ->
-            "fa-solid fa-lightbulb"
-
-        LightOff ->
-            "fa-regular fa-lightbulb"

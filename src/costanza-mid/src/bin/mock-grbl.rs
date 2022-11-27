@@ -40,7 +40,7 @@ struct Machine {
 }
 
 impl Machine {
-  fn update<'a>(&mut self, message: Message<'a>) -> io::Result<Option<String>> {
+  fn update(&mut self, message: Message<'_>) -> io::Result<Option<String>> {
     match message {
       Message::Command(utf8_str) => match utf8_str {
         "?" => {

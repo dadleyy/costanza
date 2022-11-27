@@ -1,4 +1,4 @@
-module HomePage exposing (..)
+module HomePage exposing (HomePage, Message(..), init, update, view)
 
 import Boot
 import Button
@@ -21,6 +21,18 @@ type Request
     | NotAsked
 
 
+type alias HomePageConfigurationView =
+    { device : String
+    , baud : Int
+    , lastAttempt : Request
+    }
+
+
+type HomePageView
+    = Terminal
+    | Configure HomePageConfigurationView
+
+
 type alias HomePage =
     { lastRequest : Request
     , currentInput : String
@@ -28,6 +40,7 @@ type alias HomePage =
     , connection : HomeConnectionState
     , lastConnectionMillis : Int
     , lastError : Maybe String
+    , view : HomePageView
     , tick : Int
     }
 
@@ -37,13 +50,22 @@ type HomeConnectionState
     | Websocket Bool
 
 
+type InputKind
+    = TerminalInputKeyUp
+    | ConfigurationFormKeyup
+
+
 type Message
     = AttemptSend String
     | Noop
+    | SubmitConfig
+    | ToggleView
+    | UpdateDevice String
+    | UpdateBaud String
     | FileUploadResult (Result Http.Error ())
     | GotFiles (List File.File)
     | UpdateHomeInput String
-    | KeyDown Int
+    | KeyUp InputKind Int
     | RawWebsocket String
     | Tick Time.Posix
 
@@ -61,6 +83,7 @@ init =
     { lastRequest = NotAsked
     , tick = 0
     , history = []
+    , view = Terminal
     , connection = Disconnected
     , currentInput = ""
     , lastConnectionMillis = 0
@@ -81,6 +104,53 @@ upload env file =
 update : Message -> ( HomePage, Env.Environment ) -> ( HomePage, Cmd Message )
 update message ( home, env ) =
     case message of
+        UpdateDevice newDevice ->
+            let
+                newHome =
+                    { home
+                        | view =
+                            case home.view of
+                                Configure configuration ->
+                                    Configure
+                                        { configuration | device = newDevice }
+
+                                _ ->
+                                    home.view
+                    }
+            in
+            ( newHome, Cmd.none )
+
+        UpdateBaud newBaud ->
+            let
+                newHome =
+                    { home
+                        | view =
+                            case home.view of
+                                Configure configuration ->
+                                    Configure
+                                        { configuration | baud = String.toInt newBaud |> Maybe.withDefault 0 }
+
+                                _ ->
+                                    home.view
+                    }
+            in
+            ( newHome, Cmd.none )
+
+        SubmitConfig ->
+            sendConfig home
+
+        ToggleView ->
+            let
+                next =
+                    case home.view of
+                        Configure _ ->
+                            Terminal
+
+                        Terminal ->
+                            Configure { device = "", baud = 0, lastAttempt = NotAsked }
+            in
+            ( { home | view = next }, Cmd.none )
+
         FileUploadResult _ ->
             ( home, Cmd.none )
 
@@ -94,12 +164,13 @@ update message ( home, env ) =
         Noop ->
             ( home, Cmd.none )
 
-        KeyDown 13 ->
-            ( consumeInput home home.currentInput
-            , sendInputMessage home.currentInput home.tick
-            )
+        KeyUp TerminalInputKeyUp 13 ->
+            sendConfig home
 
-        KeyDown _ ->
+        KeyUp ConfigurationFormKeyup 13 ->
+            sendConfig home
+
+        KeyUp _ _ ->
             ( home, Cmd.none )
 
         Tick posixValue ->
@@ -176,6 +247,63 @@ onKeyUp tagger =
 
 view : HomePage -> Html.Html Message
 view homePage =
+    Html.div [ AT.class "pt-8 flex items-center flex-col w-full h-full" ]
+        [ case homePage.lastError of
+            Nothing ->
+                Html.div [] []
+
+            Just e ->
+                Html.div [ AT.class "error-container mb-4" ] [ Html.text e ]
+        , viewTabs homePage.view
+        , case homePage.view of
+            Configure configuration ->
+                viewConfiguration homePage configuration
+
+            Terminal ->
+                viewTerminal homePage
+        ]
+
+
+viewConfiguration : HomePage -> HomePageConfigurationView -> Html.Html Message
+viewConfiguration home config =
+    Html.div [ AT.class "flex items-center w-full px-8" ]
+        [ Html.div [ AT.class "mr-4 flex-1" ]
+            [ Html.input
+                [ AT.type_ "text"
+                , AT.class "block w-full"
+                , AT.value config.device
+                , EV.onInput UpdateDevice
+                , onKeyUp (KeyUp ConfigurationFormKeyup)
+                , AT.placeholder "Device"
+                , AT.disabled (config.lastAttempt == Pending)
+                ]
+                []
+            ]
+        , Html.div [ AT.class "mr-4 flex-1" ]
+            [ Html.input
+                [ AT.type_ "number"
+                , AT.class "block w-full"
+                , EV.onInput UpdateBaud
+                , onKeyUp (KeyUp ConfigurationFormKeyup)
+                , AT.value (String.fromInt config.baud)
+                , AT.placeholder "Baud"
+                , AT.disabled (config.lastAttempt == Pending)
+                ]
+                []
+            ]
+        , Button.view
+            ( Button.Icon Icon.Plane SubmitConfig
+            , if config.lastAttempt == Pending then
+                Button.Disabled
+
+              else
+                Button.Primary
+            )
+        ]
+
+
+viewTerminal : HomePage -> Html.Html Message
+viewTerminal homePage =
     let
         isDisabled =
             homePage.connection
@@ -185,14 +313,8 @@ view homePage =
                 || homePage.connection
                 == Websocket False
     in
-    Html.div [ AT.class "pt-8 flex items-center flex-col w-full h-full" ]
-        [ case homePage.lastError of
-            Nothing ->
-                Html.div [] []
-
-            Just e ->
-                Html.div [ AT.class "error-container mb-4" ] [ Html.text e ]
-        , Html.div [ AT.class "flex items-center w-full px-8" ]
+    Html.div [ AT.class "w-full relative" ]
+        [ Html.div [ AT.class "flex items-center w-full px-8" ]
             [ Html.div [ AT.class "mr-4" ]
                 [ case homePage.connection of
                     Disconnected ->
@@ -209,12 +331,12 @@ view homePage =
                 , AT.class "mr-3 flex-1"
                 , AT.value homePage.currentInput
                 , EV.onInput UpdateHomeInput
-                , onKeyUp KeyDown
+                , onKeyUp (KeyUp TerminalInputKeyUp)
                 , AT.disabled isDisabled
                 ]
                 []
             , Button.view
-                ( Button.Icon Button.Plane (AttemptSend homePage.currentInput)
+                ( Button.Icon Icon.Plane (AttemptSend homePage.currentInput)
                 , Button.disabledOr (String.isEmpty homePage.currentInput || isDisabled) Button.Primary
                 )
             , Html.div [ AT.class "ml-4 relative" ]
@@ -227,7 +349,7 @@ view homePage =
                         , EV.on "change" (JD.map GotFiles filesDecoder)
                         ]
                         []
-                    , Button.view ( Button.Icon Button.File Noop, Button.disabledOr isDisabled Button.Secondary )
+                    , Button.view ( Button.Icon Icon.File Noop, Button.disabledOr isDisabled Button.Secondary )
                     ]
                 ]
             ]
@@ -290,10 +412,42 @@ handleInnerWebsocketMessage home message =
     let
         parsed =
             SS.parseMessage message
+
+        -- todo: here we are saying that any time we recieve a websocket message from the server,
+        -- if we are currently configuring and waiting for a response, we stay on that page. Otherwise,
+        -- we automatically exchange ourselves for the terminal view.
+        nextView =
+            case home.view of
+                Configure configurationState ->
+                    let
+                        attemptState =
+                            case ( configurationState.lastAttempt, parsed ) of
+                                ( Pending, Ok (SS.State state) ) ->
+                                    Done (Ok ())
+
+                                _ ->
+                                    configurationState.lastAttempt
+
+                        goToTerminal =
+                            case attemptState of
+                                Done (Ok _) ->
+                                    True
+
+                                _ ->
+                                    False
+                    in
+                    if goToTerminal then
+                        Terminal
+
+                    else
+                        Configure { configurationState | lastAttempt = attemptState }
+
+                Terminal ->
+                    Terminal
     in
     case parsed of
         Ok (SS.Response stuff) ->
-            ( { home | lastRequest = Done (Ok ()) }, Cmd.none )
+            ( { home | lastRequest = Done (Ok ()), view = nextView }, Cmd.none )
 
         Ok (SS.State state) ->
             let
@@ -304,12 +458,77 @@ handleInnerWebsocketMessage home message =
                     else
                         Websocket False
             in
-            ( { home | history = state.history, connection = nextConnection }, Cmd.none )
+            ( { home | history = state.history, view = nextView, connection = nextConnection }, Cmd.none )
 
         Err error ->
-            ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
+            ( { home | lastError = Just (JD.errorToString error), view = nextView }, Cmd.none )
 
 
 filesDecoder : JD.Decoder (List File.File)
 filesDecoder =
     JD.at [ "target", "files" ] (JD.list File.decoder)
+
+
+viewTabs : HomePageView -> Html.Html Message
+viewTabs page =
+    let
+        isConfig =
+            case page of
+                Configure _ ->
+                    True
+
+                _ ->
+                    False
+    in
+    Html.div [ AT.class "flex items-center mb-5" ]
+        [ Html.div [ AT.class "mr-5" ]
+            [ Button.view
+                ( Button.Icon Icon.Terminal ToggleView
+                , if page == Terminal then
+                    Button.Disabled
+
+                  else
+                    Button.Secondary
+                )
+            ]
+        , Html.div []
+            [ Button.view
+                ( Button.Icon Icon.Configuration ToggleView
+                , if isConfig then
+                    Button.Disabled
+
+                  else
+                    Button.Secondary
+                )
+            ]
+        ]
+
+
+sendConfig : HomePage -> ( HomePage, Cmd Message )
+sendConfig home =
+    let
+        ( nextHome, cmd ) =
+            case home.view of
+                Configure config ->
+                    ( { home | view = Configure { config | lastAttempt = Pending } }, submitConfig config )
+
+                _ ->
+                    ( home, Cmd.none )
+    in
+    ( nextHome, cmd )
+
+
+submitConfig : HomePageConfigurationView -> Cmd Message
+submitConfig config =
+    let
+        payload =
+            JE.object
+                [ ( "kind", JE.string "configuration" )
+                , ( "device", JE.string config.device )
+                , ( "baud", JE.int config.baud )
+                ]
+
+        values =
+            JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 payload) ) ]
+    in
+    Boot.sendMessage (JE.encode 0 values)
