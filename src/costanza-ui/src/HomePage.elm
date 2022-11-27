@@ -1,6 +1,7 @@
 module HomePage exposing (HomePage, Message(..), init, update, view)
 
 import Boot
+import Browser.Navigation as Nav
 import Button
 import Environment as Env
 import File
@@ -13,6 +14,7 @@ import Json.Decode as JD
 import Json.Encode as JE
 import StateSync as SS
 import Time
+import Url
 
 
 type Request
@@ -35,6 +37,7 @@ type HomePageView
 
 type alias HomePage =
     { lastRequest : Request
+    , key : Nav.Key
     , currentInput : String
     , history : List SS.StateHistoryEntry
     , connection : HomeConnectionState
@@ -78,12 +81,19 @@ type alias WebsocketResponse =
     }
 
 
-init : HomePage
-init =
+init : Nav.Key -> Url.Url -> HomePage
+init key url =
     { lastRequest = NotAsked
     , tick = 0
+    , key = key
     , history = []
-    , view = Terminal
+    , view =
+        case url.path of
+            "/home/settings" ->
+                Configure { device = "", baud = 0, lastAttempt = NotAsked }
+
+            _ ->
+                Terminal
     , connection = Disconnected
     , currentInput = ""
     , lastConnectionMillis = 0
@@ -101,8 +111,8 @@ upload env file =
     Http.post { body = Http.fileBody file, expect = Http.expectWhatever FileUploadResult, url = uploadUrl env }
 
 
-update : Message -> ( HomePage, Env.Environment ) -> ( HomePage, Cmd Message )
-update message ( home, env ) =
+update : Message -> ( HomePage, Env.Environment, Nav.Key ) -> ( HomePage, Cmd Message )
+update message ( home, env, key ) =
     case message of
         UpdateDevice newDevice ->
             let
@@ -144,12 +154,12 @@ update message ( home, env ) =
                 next =
                     case home.view of
                         Configure _ ->
-                            Terminal
+                            "/home/terminal"
 
                         Terminal ->
-                            Configure { device = "", baud = 0, lastAttempt = NotAsked }
+                            "/home/settings"
             in
-            ( { home | view = next }, Cmd.none )
+            ( home, Nav.replaceUrl key next )
 
         FileUploadResult _ ->
             ( home, Cmd.none )

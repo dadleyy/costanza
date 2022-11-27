@@ -167,6 +167,7 @@ impl Application {
   /// 2. connect
   /// 3. pending connect
   /// 4. etc...
+  #[inline]
   fn add_statuses(&mut self, command_list: &mut Vec<Command>) {
     for (id, client) in &mut self.connected_clients {
       client.serial_available = self.serial.available();

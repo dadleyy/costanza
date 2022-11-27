@@ -1,56 +1,54 @@
-use iced::widget::{button, column, text};
-use iced::{Alignment, Element, Sandbox, Settings};
+use clap::Parser;
+use iced::widget::{button, column};
+use iced::{executor, Alignment, Application, Command, Element, Settings, Theme};
+
+#[derive(Parser)]
+struct CommandLineArguments {
+  #[clap(short = 'c')]
+  config: String,
+}
 
 pub fn main() -> iced::Result {
   if let Err(error) = dotenv::dotenv() {
     eprintln!("unable to load '.env' - {error}");
   }
-  let mut settings = Settings::default();
+  let config = CommandLineArguments::parse();
+
+  let mut settings = Settings::with_flags(config);
   settings.window.size = (480, 272);
   settings.window.resizable = false;
   Counter::run(settings)
 }
 
-struct Counter {
-  value: i32,
-}
+struct Counter {}
 
 #[derive(Debug, Clone, Copy)]
 enum Message {
-  IncrementPressed,
-  DecrementPressed,
+  Home,
 }
 
-impl Sandbox for Counter {
+impl Application for Counter {
   type Message = Message;
+  type Flags = CommandLineArguments;
+  type Executor = executor::Default;
+  type Theme = Theme;
 
-  fn new() -> Self {
-    Self { value: 0 }
+  fn new(flags: Self::Flags) -> (Self, Command<Message>) {
+    (Self {}, Command::none())
   }
 
   fn title(&self) -> String {
     String::from("Counter - Iced")
   }
 
-  fn update(&mut self, message: Message) {
-    match message {
-      Message::IncrementPressed => {
-        self.value += 1;
-      }
-      Message::DecrementPressed => {
-        self.value -= 1;
-      }
-    }
+  fn update(&mut self, message: Message) -> Command<Message> {
+    Command::none()
   }
 
   fn view(&self) -> Element<Message> {
-    column![
-      button("Increment").on_press(Message::IncrementPressed),
-      text(self.value).size(50),
-      button("Decrement").on_press(Message::DecrementPressed)
-    ]
-    .padding(20)
-    .align_items(Alignment::Center)
-    .into()
+    column![button("Home").on_press(Message::Home),]
+      .padding(20)
+      .align_items(Alignment::Center)
+      .into()
   }
 }

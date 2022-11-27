@@ -99,7 +99,7 @@ type TElmMessage =
     };
 
     const ondata = (event: MessageEvent) => {
-      console.log(`(boot)[${messageCount}] message from server`, {
+      console.log(`[${messageCount}] message from server`, {
         data: event.data,
       });
       messageCount += 1;
@@ -140,6 +140,7 @@ type TElmMessage =
     // This function is used to subscribe to messages received from elm. These will either be bound
     // for the websocket to the server, or are intended for us here in js land.
     function processElmMessage(content: string): void {
+      console.log("processing message from elm runtime", { content });
       try {
         const parsed: TElmMessage = JSON.parse(content);
         switch (parsed.kind) {

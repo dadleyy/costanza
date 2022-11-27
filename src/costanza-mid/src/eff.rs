@@ -114,6 +114,7 @@ where
     Ok(next)
   }
 
+  #[inline]
   async fn frame(self) -> io::Result<Self> {
     // Create a list of futures that we will try to take the next ready and drop the rest. It is
     // not immediately clear right now if this can race or not (i.e: two futures ready at the same
