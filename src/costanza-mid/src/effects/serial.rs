@@ -35,6 +35,7 @@ pub enum SerialCommand<D>
 where
   D: std::fmt::Display,
 {
+  Control(bool),
   Configure(SerialConfiguration),
   Data(D),
 }
@@ -79,6 +80,7 @@ where
   {
     let mut port = None;
     let mut is_connected = false;
+    let mut manual_disconnect = false;
 
     loop {
       // Check to see if we have anything waiting to be sent into our serial port, or if we have a
@@ -90,6 +92,18 @@ where
           break Err(io::Error::new(io::ErrorKind::Other, message));
         }
         Ok(command) => match glue.translate(command) {
+          // When a user has explictly sent a control command, we'll use the `manual_disconnect`
+          // flag to circumvent any attempt to connect.
+          Some(SerialCommand::Control(true)) => {
+            manual_disconnect = false;
+            None
+          }
+          Some(SerialCommand::Control(false)) => {
+            manual_disconnect = true;
+            port = None;
+            None
+          }
+
           Some(SerialCommand::Configure(config)) => {
             self.config = Some(config);
             None
@@ -102,8 +116,9 @@ where
         },
       };
 
-      port = match (self.config.as_ref(), port.take()) {
-        (Some(config), None) => {
+      port = match (manual_disconnect, self.config.as_ref(), port.take()) {
+        (true, _, _) => None,
+        (_, Some(config), None) => {
           let new_port = serialport::new(&config.device, config.baud)
             .open()
             .map_err(|error| {
@@ -127,8 +142,8 @@ where
 
           new_port
         }
-        (_, Some(port)) => Some(port),
-        (None, None) => None,
+        (_, _, Some(port)) => Some(port),
+        (_, None, None) => None,
       };
 
       if port.is_none() {

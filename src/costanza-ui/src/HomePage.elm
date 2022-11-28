@@ -44,7 +44,7 @@ type alias HomePage =
     , lastConnectionMillis : Int
     , lastError : Maybe String
     , view : HomePageView
-    , tick : Int
+    , requestTick : Int
     }
 
 
@@ -59,18 +59,21 @@ type InputKind
 
 
 type Message
-    = AttemptSend String
-    | Noop
-    | SubmitConfig
+    = Noop
+    | KeyUp InputKind Int
     | ToggleView
+    | RawWebsocket String
+    | Tick Time.Posix
+      -- Configuration related messages
+    | SubmitConfig
+    | RequestConnection Bool
     | UpdateDevice String
     | UpdateBaud String
+      -- Termainal related messages
+    | AttemptSend String
     | FileUploadResult (Result Http.Error ())
     | GotFiles (List File.File)
     | UpdateHomeInput String
-    | KeyUp InputKind Int
-    | RawWebsocket String
-    | Tick Time.Posix
 
 
 type alias WebsocketResponse =
@@ -84,7 +87,7 @@ type alias WebsocketResponse =
 init : Nav.Key -> Url.Url -> HomePage
 init key url =
     { lastRequest = NotAsked
-    , tick = 0
+    , requestTick = 0
     , key = key
     , history = []
     , view =
@@ -114,6 +117,8 @@ upload env file =
 update : Message -> ( HomePage, Env.Environment, Nav.Key ) -> ( HomePage, Cmd Message )
 update message ( home, env, key ) =
     case message of
+        -- TODO(sub-page): the update device configuration message needs to unwrap a lot just to be
+        -- able to update our device value
         UpdateDevice newDevice ->
             let
                 newHome =
@@ -130,6 +135,8 @@ update message ( home, env, key ) =
             in
             ( newHome, Cmd.none )
 
+        -- TODO(sub-page): the update baud configuration message needs to unwrap a lot just to be
+        -- able to update our baud value
         UpdateBaud newBaud ->
             let
                 newHome =
@@ -171,6 +178,21 @@ update message ( home, env, key ) =
             in
             ( home, Cmd.batch cmds )
 
+        RequestConnection bool ->
+            let
+                nextHome =
+                    makePending home
+            in
+            ( nextHome
+            , if bool then
+                requestRetry home.requestTick
+
+              else
+                requestClose home.requestTick
+            )
+
+        -- todo: The `Noop` message is being used as the placeholder message created from the button
+        -- that sits atop the file input html element.
         Noop ->
             ( home, Cmd.none )
 
@@ -232,7 +254,7 @@ update message ( home, env, key ) =
                     ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
 
         AttemptSend payload ->
-            ( consumeInput home payload, sendInputMessage payload home.tick )
+            ( consumeInput home payload, sendInputMessage payload home.requestTick )
 
         UpdateHomeInput value ->
             ( { home | currentInput = value }, Cmd.none )
@@ -242,12 +264,12 @@ consumeInput : HomePage -> String -> HomePage
 consumeInput home payload =
     let
         newTick =
-            home.tick + 1
+            home.requestTick + 1
 
         newHistory =
             List.append home.history [ SS.SentCommand payload ]
     in
-    { home | tick = newTick, lastRequest = Pending, currentInput = "", history = newHistory }
+    { home | requestTick = newTick, lastRequest = Pending, currentInput = "", history = newHistory }
 
 
 onKeyUp : (Int -> msg) -> Html.Attribute msg
@@ -301,14 +323,36 @@ viewConfiguration home config =
                 ]
                 []
             ]
-        , Button.view
-            ( Button.Icon Icon.Plane SubmitConfig
-            , if config.lastAttempt == Pending then
-                Button.Disabled
+        , Html.div [ AT.class "mr-4 relative" ]
+            [ Button.view
+                ( Button.Icon Icon.Plane SubmitConfig
+                , if config.lastAttempt == Pending then
+                    Button.Disabled
 
-              else
-                Button.Primary
-            )
+                  else
+                    Button.Primary
+                )
+            ]
+        , Html.div [ AT.class "mr-4 relative" ]
+            [ Button.view
+                ( Button.Icon Icon.Sync (RequestConnection True)
+                , if config.lastAttempt == Pending then
+                    Button.Disabled
+
+                  else
+                    Button.Secondary
+                )
+            ]
+        , Html.div [ AT.class "relative" ]
+            [ Button.view
+                ( Button.Icon Icon.Close (RequestConnection False)
+                , if config.lastAttempt == Pending then
+                    Button.Disabled
+
+                  else
+                    Button.Warning
+                )
+            ]
         ]
 
 
@@ -386,21 +430,6 @@ renderHistoryEntry entry =
                 [ Html.div [ AT.class "mr-4" ] [ Icon.view Icon.ChevronRight ]
                 , Html.div [] [ Html.text message ]
                 ]
-
-
-sendInputMessage : String -> Int -> Cmd Message
-sendInputMessage input tick =
-    let
-        -- Encode the actual command as a json value, serialize that into a string, and encode that string
-        -- into another json value. The intermediary json value is what is parsed on the JS/TS `boot`
-        -- "kernel" that is sent along to the server.
-        payload =
-            JE.object [ ( "kind", JE.string "raw_serial" ), ( "value", JE.string input ), ( "tick", JE.int tick ) ]
-
-        values =
-            JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 payload) ) ]
-    in
-    Boot.sendMessage (JE.encode 0 values)
 
 
 decoder : JD.Decoder WebsocketResponse
@@ -517,28 +546,98 @@ viewTabs page =
 sendConfig : HomePage -> ( HomePage, Cmd Message )
 sendConfig home =
     let
-        ( nextHome, cmd ) =
+        nextHome =
+            makePending home
+
+        cmd =
             case home.view of
                 Configure config ->
-                    ( { home | view = Configure { config | lastAttempt = Pending } }, submitConfig config )
+                    submitConfig config home.requestTick
 
                 _ ->
-                    ( home, Cmd.none )
+                    Cmd.none
     in
     ( nextHome, cmd )
 
 
-submitConfig : HomePageConfigurationView -> Cmd Message
-submitConfig config =
-    let
-        payload =
-            JE.object
-                [ ( "kind", JE.string "configuration" )
-                , ( "device", JE.string config.device )
-                , ( "baud", JE.int config.baud )
-                ]
+makePending : HomePage -> HomePage
+makePending home =
+    case home.view of
+        Terminal ->
+            home
 
+        Configure config ->
+            { home | view = Configure { config | lastAttempt = Pending } }
+
+
+
+-- Outbound websocket-related functions. Create and send along commands, configurations, etc...
+
+
+requestRetry : Int -> Cmd Message
+requestRetry requestTick =
+    sendWebsocketPayload
+        (JE.object
+            [ ( "tick", JE.int requestTick )
+            , ( "request"
+              , JE.object
+                    [ ( "kind", JE.string "retry_serial" ) ]
+              )
+            ]
+        )
+
+
+requestClose : Int -> Cmd Message
+requestClose requestTick =
+    sendWebsocketPayload
+        (JE.object
+            [ ( "tick", JE.int requestTick )
+            , ( "request"
+              , JE.object
+                    [ ( "kind", JE.string "close_serial" ) ]
+              )
+            ]
+        )
+
+
+submitConfig : HomePageConfigurationView -> Int -> Cmd Message
+submitConfig config requestTick =
+    sendWebsocketPayload
+        (JE.object
+            [ ( "tick", JE.int requestTick )
+            , ( "request"
+              , JE.object
+                    [ ( "kind", JE.string "configuration" )
+                    , ( "device", JE.string config.device )
+                    , ( "baud", JE.int config.baud )
+                    ]
+              )
+            ]
+        )
+
+
+sendInputMessage : String -> Int -> Cmd Message
+sendInputMessage input requestTick =
+    sendWebsocketPayload
+        (JE.object
+            [ ( "tick", JE.int requestTick )
+            , ( "request"
+              , JE.object
+                    [ ( "kind", JE.string "raw_serial" )
+                    , ( "value", JE.string input )
+                    ]
+              )
+            ]
+        )
+
+
+sendWebsocketPayload : JE.Value -> Cmd Message
+sendWebsocketPayload value =
+    let
+        -- Encode the actual command as a json value, serialize that into a string, and encode that string
+        -- into another json value. The intermediary json value is what is parsed on the JS/TS `boot`
+        -- "kernel" that is sent along to the server.
         values =
-            JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 payload) ) ]
+            JE.object [ ( "kind", JE.string "websocket" ), ( "payload", JE.string (JE.encode 0 value) ) ]
     in
     Boot.sendMessage (JE.encode 0 values)

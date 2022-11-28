@@ -59,7 +59,7 @@ view kind =
                     "button-primary"
 
                 Secondary ->
-                    "button-primary"
+                    "button-secondary"
 
                 Warning ->
                     "button-warning"

@@ -1,6 +1,23 @@
+#![allow(dead_code, unused)]
+
+//! TODO: this whole application is pending active construction. What exists here only serves to
+//! provide a distributable artifact for hardware/os verification purposes.
+
 use clap::Parser;
 use iced::widget::{button, column};
 use iced::{executor, Alignment, Application, Command, Element, Settings, Theme};
+use serde::Deserialize;
+use std::io;
+
+#[derive(Deserialize)]
+struct WebsocketConfiguration {
+  addr: String,
+}
+
+#[derive(Deserialize)]
+struct Configuration {
+  websocket: WebsocketConfiguration,
+}
 
 #[derive(Parser)]
 struct CommandLineArguments {
@@ -8,16 +25,17 @@ struct CommandLineArguments {
   config: String,
 }
 
-pub fn main() -> iced::Result {
+pub fn main() -> io::Result<()> {
   if let Err(error) = dotenv::dotenv() {
     eprintln!("unable to load '.env' - {error}");
   }
-  let config = CommandLineArguments::parse();
-
+  let args = CommandLineArguments::parse();
+  let contents = std::fs::read_to_string(&args.config)?;
+  let config = toml::from_str::<Configuration>(&contents)?;
   let mut settings = Settings::with_flags(config);
   settings.window.size = (480, 272);
   settings.window.resizable = false;
-  Counter::run(settings)
+  Counter::run(settings).map_err(|error| io::Error::new(io::ErrorKind::Other, format!("runtime error - {error}")))
 }
 
 struct Counter {}
@@ -29,7 +47,7 @@ enum Message {
 
 impl Application for Counter {
   type Message = Message;
-  type Flags = CommandLineArguments;
+  type Flags = Configuration;
   type Executor = executor::Default;
   type Theme = Theme;
 

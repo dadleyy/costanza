@@ -48,8 +48,12 @@ enum SerialCommand {
   Status,
 
   Configure(effects::serial::SerialConfiguration),
+
+  Control(bool),
 }
 
+/// TODO: This implementation is used when mapping our concrete application command into a string
+/// that can actually be sent to the serial connection.
 impl std::fmt::Display for SerialCommand {
   fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
     match &self {
@@ -62,18 +66,29 @@ impl std::fmt::Display for SerialCommand {
 
 #[derive(Deserialize, Serialize, Debug)]
 struct RawSerialRequest {
-  tick: u32,
   value: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ClientMessageRequest {
+  RawSerial(RawSerialRequest),
+  Configuration(effects::serial::SerialConfiguration),
+  CloseSerial,
+  RetrySerial,
 }
 
 /// This type represents the schema of data that can be sent from individual websocket
 /// connections. The `Application` receives that data as raw `String` data and will attempt to
 /// parse it here as json.
 #[derive(Deserialize, Serialize, Debug)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ClientMessage {
-  RawSerial(RawSerialRequest),
-  Configuration(effects::serial::SerialConfiguration),
+#[serde(rename_all = "snake_case")]
+struct ClientMessage {
+  // Every request from the client should have a unqiue identifier so the response that comes
+  // through the websocket can be re-associated on the client with the request.
+  tick: u32,
+
+  request: ClientMessageRequest,
 }
 
 #[derive(Debug)]
@@ -113,6 +128,7 @@ struct DerivedClientState {
 
   /// Whether or not the serial connection is available.
   serial_available: bool,
+  last_config: Option<crate::effects::serial::SerialConfiguration>,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -146,6 +162,18 @@ impl SerialConnectionState {
   }
 }
 
+#[derive(Debug, Default)]
+struct DerivedSerialState {
+  connection: SerialConnectionState,
+  last_config: Option<crate::effects::serial::SerialConfiguration>,
+}
+
+impl DerivedSerialState {
+  fn available(&self) -> bool {
+    self.connection.available()
+  }
+}
+
 #[derive(Default)]
 struct Application {
   /// The `last_broadcast` field is used to determine during which tick we should broadcast all
@@ -156,7 +184,7 @@ struct Application {
   connected_clients: std::collections::HashMap<String, DerivedClientState>,
 
   /// Whether or not our serial connection is available.
-  serial: SerialConnectionState,
+  serial: DerivedSerialState,
 }
 
 impl Application {
@@ -191,9 +219,14 @@ impl crate::eff::Application for Application {
 
   fn init(self, flags: Self::Flags) -> (Self, Option<Vec<Self::Command>>) {
     if let Some(config) = flags.serial {
-      let config_cmd = Command::Serial(SerialCommand::Configure(config));
+      let config_cmd = Command::Serial(SerialCommand::Configure(config.clone()));
+      let mut next = self;
+      next.serial = DerivedSerialState {
+        last_config: Some(config),
+        connection: SerialConnectionState::default(),
+      };
       tracing::info!("sending initial serial configuration");
-      return (self, Some(vec![config_cmd]));
+      return (next, Some(vec![config_cmd]));
     }
 
     (self, None)
@@ -209,7 +242,7 @@ impl crate::eff::Application for Application {
         // Store the state on the application state itself. This will be used as new clients
         // connect so they have a fresh connection value without having to rely on these messages
         // being received.
-        next.serial = if serial_available {
+        next.serial.connection = if serial_available {
           tracing::info!("serial connection available + idle");
           SerialConnectionState::Idle(None)
         } else {
@@ -234,7 +267,7 @@ impl crate::eff::Application for Application {
         }
 
         tracing::info!("has uploaded file ({file_contents:?})");
-        next.serial = SerialConnectionState::SendingFile(file_contents);
+        next.serial.connection = SerialConnectionState::SendingFile(file_contents);
         return (next, None);
       }
 
@@ -246,54 +279,83 @@ impl crate::eff::Application for Application {
       // When a client sends us data, we receive it as a raw string and are left to determine what
       // to do with it ourselves.
       Message::Http(effects::http::Message::ClientData(id, data)) => {
-        tracing::debug!("handling client '{id}' data '{data}'");
-
-        let parsed = match serde_json::from_str::<ClientMessage>(&data) {
-          Err(error) => {
-            tracing::warn!("unable to parse client data - {error}");
-            return (next, None);
-          }
-          Ok(p) => p,
-        };
-
         let maybe_client = next.connected_clients.get_mut(&id);
 
         if maybe_client.is_none() {
+          tracing::warn!("unable to find client to associate with received data");
+
           return (next, None);
         }
 
         // Now that we have proven this is a valid request, we know we're going to be creating some
         // commands and we can unwrap the `Option`.
-        let mut connected_client = maybe_client.unwrap();
+        let connected_client = maybe_client.unwrap();
+        tracing::debug!("handling client '{id}' data '{data}'");
+
+        let parsed = match serde_json::from_str::<ClientMessage>(&data) {
+          Err(error) => {
+            tracing::warn!("unable to parse client data - {error}");
+
+            // Create the response that we'll send back to the client.
+            let response = &ResponseKinds::Response(ClientResponse {
+              tick: 0,
+              status: "failed".into(),
+            });
+
+            // Immediately return a command that will let our client know we have received their
+            // request.
+            match serde_json::to_string(&response) {
+              Ok(res) => {
+                return (
+                  next,
+                  Some(vec![Command::Http(effects::http::Command::SendState(id.clone(), res))]),
+                );
+              }
+              Err(error) => tracing::warn!("unable to serialize error response! - {error}"),
+            }
+
+            return (next, None);
+          }
+          Ok(p) => p,
+        };
+
+        let new_tick = parsed.tick;
         let mut cmds = vec![];
+        let mut update_configs = false;
 
         // Update the "tick" that we're using based on the message provided
         tracing::debug!("has parsed client data - {parsed:?}");
 
-        connected_client.tick = match &parsed {
-          ClientMessage::Configuration(configuration) => {
+        match &parsed.request {
+          ClientMessageRequest::Configuration(configuration) => {
             // Create an attempt to configure our serial connection and make note of it on our
             // internal, mutable state.
             cmds.push(Command::Serial(SerialCommand::Configure(configuration.clone())));
-            next.serial = SerialConnectionState::PendingAttempt;
-
-            connected_client.tick
+            next.serial.last_config = Some(configuration.clone());
+            next.serial.connection = SerialConnectionState::PendingAttempt;
+            update_configs = true;
           }
 
-          ClientMessage::RawSerial(inner) => {
-            cmds.push(Command::Serial(SerialCommand::Raw(inner.value.clone())));
-            let tick = inner.tick;
+          ClientMessageRequest::RetrySerial => {
+            tracing::info!("client has requested to attempt to reconnect our serial connection");
+            cmds.push(Command::Serial(SerialCommand::Control(true)));
+          }
 
+          ClientMessageRequest::CloseSerial => {
+            tracing::info!("client has requested to close the serial connection");
+            cmds.push(Command::Serial(SerialCommand::Control(false)));
+          }
+
+          ClientMessageRequest::RawSerial(inner) => {
+            cmds.push(Command::Serial(SerialCommand::Raw(inner.value.clone())));
             // Add this interaction to our history
             connected_client.history.push(ClientHistoryEntry::SentCommand(parsed));
-
-            tick
           }
         };
 
         // Create the response that we'll send back to the client.
         let response = &ResponseKinds::Response(ClientResponse {
-          tick: connected_client.tick,
+          tick: new_tick,
           status: "ok".into(),
         });
 
@@ -306,11 +368,18 @@ impl crate::eff::Application for Application {
           Err(error) => tracing::warn!("unable to serialize - {error}"),
         }
 
+        // If this request involved updating our serial config, update clients so the ui may
+        // render the latest connection values.
+        if update_configs {
+          for mut client in next.connected_clients.values_mut() {
+            client.last_config = next.serial.last_config.clone();
+          }
+        }
+
         // Now, we _also_ want to send along a fresh set of state updates since we know we're about
         // to be disconnecting from, and attempting to connect to a new serial device.
         next.add_statuses(&mut cmds);
 
-        tracing::warn!("unable to fiend client id {id}");
         return (next, Some(cmds));
       }
 
@@ -320,6 +389,7 @@ impl crate::eff::Application for Application {
         // Populate this new client with the latest connection state available to us.
         let connected_client = DerivedClientState {
           serial_available: next.serial.available(),
+          last_config: next.serial.last_config.clone(),
           ..DerivedClientState::default()
         };
 
@@ -384,7 +454,7 @@ impl crate::eff::Application for Application {
 
         // Start by seeing if we are sending a file over. If so, we will attempt to take the next
         // line off the contents and push a raw serial cmd onto our return vector.
-        if let SerialConnectionState::SendingFile(contents) = next.serial {
+        if let SerialConnectionState::SendingFile(contents) = next.serial.connection {
           let mut lines = contents.lines();
           let next_line = lines.next();
 
@@ -398,13 +468,13 @@ impl crate::eff::Application for Application {
             // manipulating it back and forth between iterator and concrete string.
             let remainder = lines.map(|l| format!("{l}\n")).collect::<String>();
 
-            next.serial = SerialConnectionState::SendingFile(remainder);
+            next.serial.connection = SerialConnectionState::SendingFile(remainder);
           } else {
-            next.serial = SerialConnectionState::Idle(None);
+            next.serial.connection = SerialConnectionState::Idle(None);
           }
         }
 
-        if let SerialConnectionState::Idle(last_ping) = next.serial {
+        if let SerialConnectionState::Idle(last_ping) = next.serial.connection {
           let now = std::time::Instant::now();
           let mut is_old = last_ping.is_none();
 
@@ -414,7 +484,7 @@ impl crate::eff::Application for Application {
 
           if is_old {
             tracing::info!("sending new ping to serial");
-            next.serial = SerialConnectionState::Idle(Some(now));
+            next.serial.connection = SerialConnectionState::Idle(Some(now));
             cmds.push(Command::Serial(SerialCommand::Status));
           }
         }
@@ -485,6 +555,7 @@ impl effects::serial::SerialCommandMap<SerialCommand> for SerialMap {
     };
 
     Some(match serial_command {
+      SerialCommand::Control(inner) => effects::serial::SerialCommand::Control(inner),
       SerialCommand::Configure(config) => effects::serial::SerialCommand::Configure(config),
       SerialCommand::Raw(data) => effects::serial::SerialCommand::Data(SerialCommand::Raw(data)),
       SerialCommand::Status => effects::serial::SerialCommand::Data(SerialCommand::Status),

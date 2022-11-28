@@ -13,6 +13,7 @@ type Icon
     | ChevronLeft
     | LightOn
     | LightOff
+    | Close
     | CircleDot
     | Plane
     | Video
@@ -20,11 +21,15 @@ type Icon
     | Configuration
     | Camera
     | Terminal
+    | Sync
 
 
 iconClass : Icon -> String
 iconClass kind =
     case kind of
+        Sync ->
+            "icon fa-solid fa-rotate"
+
         Terminal ->
             "icon fa-solid fa-terminal"
 
@@ -69,6 +74,9 @@ iconClass kind =
 
         Configuration ->
             "fa-solid fa-gear"
+
+        Close ->
+            "fa-solid fa-xmark"
 
 
 view : Icon -> Html.Html m

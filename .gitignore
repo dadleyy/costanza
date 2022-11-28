@@ -1,3 +1,4 @@
 /target
 config.toml
+eui-config.toml
 .env
