@@ -289,7 +289,7 @@ impl crate::eff::Application for Application {
 
         // Now that we have proven this is a valid request, we know we're going to be creating some
         // commands and we can unwrap the `Option`.
-        let connected_client = maybe_client.unwrap();
+        let mut connected_client = maybe_client.unwrap();
         tracing::debug!("handling client '{id}' data '{data}'");
 
         let parsed = match serde_json::from_str::<ClientMessage>(&data) {
@@ -320,11 +320,16 @@ impl crate::eff::Application for Application {
         };
 
         let new_tick = parsed.tick;
+
+        // Immediately update the tick on our client; any state messages published from now on
+        // should reflect that we are in sync.
+        connected_client.tick = new_tick;
+
         let mut cmds = vec![];
         let mut update_configs = false;
 
         // Update the "tick" that we're using based on the message provided
-        tracing::debug!("has parsed client data - {parsed:?}");
+        tracing::debug!("has parsed client data - {parsed:?} (tick: {new_tick})");
 
         match &parsed.request {
           ClientMessageRequest::Configuration(configuration) => {

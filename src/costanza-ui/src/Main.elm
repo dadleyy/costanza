@@ -91,7 +91,7 @@ update message model =
                 ( initialRoute, routeCmd ) =
                     Routing.authorized shared.env url shared.key shared.session
             in
-            ( Authorized initialRoute shared, Cmd.batch [ Boot.startWebsocket, routeCmd |> Cmd.map RouteMessage ] )
+            ( Authorized initialRoute shared, Cmd.batch [ routeCmd |> Cmd.map RouteMessage ] )
 
         ( Tick posixValue, _ ) ->
             ( model, Cmd.none )

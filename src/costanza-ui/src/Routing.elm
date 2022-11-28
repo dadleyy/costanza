@@ -49,22 +49,19 @@ update env key message route =
             ( route, Cmd.none )
 
         ( WebsocketMessage content, Home homePage ) ->
-            let
-                ( newInner, routeCmd ) =
-                    HomePage.update (HomePage.RawWebsocket content) ( homePage, env, key )
-            in
-            ( Home newInner, routeCmd |> Cmd.map HomeMessage )
+            updateHome (HomePage.RawWebsocket content) ( homePage, env, key )
 
         ( Tick posix, Home homePage ) ->
-            let
-                ( newInner, routeCmd ) =
-                    HomePage.update (HomePage.Tick posix) ( homePage, env, key )
-            in
-            ( Home newInner, routeCmd |> Cmd.map HomeMessage )
+            updateHome (HomePage.Tick posix) ( homePage, env, key )
 
         ( HomeMessage homeMessage, Home homePage ) ->
-            let
-                ( newInner, routeCmd ) =
-                    HomePage.update homeMessage ( homePage, env, key )
-            in
-            ( Home newInner, routeCmd |> Cmd.map HomeMessage )
+            updateHome homeMessage ( homePage, env, key )
+
+
+updateHome : HomePage.Message -> ( HomePage.HomePage, Env.Environment, Nav.Key ) -> ( Route, Cmd Message )
+updateHome message ( homePage, env, key ) =
+    let
+        ( newInner, routeCmd ) =
+            HomePage.update message ( homePage, env, key )
+    in
+    ( Home newInner, routeCmd |> Cmd.map HomeMessage )

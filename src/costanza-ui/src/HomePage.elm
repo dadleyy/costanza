@@ -12,6 +12,7 @@ import Http
 import Icon
 import Json.Decode as JD
 import Json.Encode as JE
+import Set
 import StateSync as SS
 import Time
 import Url
@@ -41,10 +42,11 @@ type alias HomePage =
     , currentInput : String
     , history : List SS.StateHistoryEntry
     , connection : HomeConnectionState
-    , lastConnectionMillis : Int
+    , lastWebsocketReconnect : Maybe Int
     , lastError : Maybe String
     , view : HomePageView
     , requestTick : Int
+    , pendingTicks : Set.Set Int
     }
 
 
@@ -87,7 +89,8 @@ type alias WebsocketResponse =
 init : Nav.Key -> Url.Url -> HomePage
 init key url =
     { lastRequest = NotAsked
-    , requestTick = 0
+    , requestTick = 1
+    , pendingTicks = Set.empty
     , key = key
     , history = []
     , view =
@@ -99,7 +102,7 @@ init key url =
                 Terminal
     , connection = Disconnected
     , currentInput = ""
-    , lastConnectionMillis = 0
+    , lastWebsocketReconnect = Nothing
     , lastError = Nothing
     }
 
@@ -183,7 +186,7 @@ update message ( home, env, key ) =
                 nextHome =
                     makePending home
             in
-            ( nextHome
+            ( bumpTick nextHome
             , if bool then
                 requestRetry home.requestTick
 
@@ -206,34 +209,30 @@ update message ( home, env, key ) =
             ( home, Cmd.none )
 
         Tick posixValue ->
-            let
-                nowMillis =
-                    Time.posixToMillis posixValue
+            case ( home.connection, home.lastWebsocketReconnect ) of
+                ( Disconnected, Nothing ) ->
+                    ( { home | lastWebsocketReconnect = Just (Time.posixToMillis posixValue) }, Cmd.none )
 
-                diff =
-                    nowMillis - home.lastConnectionMillis
+                ( Disconnected, Just value ) ->
+                    if Time.posixToMillis posixValue - value > 2000 then
+                        ( { home | lastWebsocketReconnect = Nothing }, Boot.startWebsocket )
 
-                -- During tick, check reconnection here.
-                ( nextHome, cmd ) =
-                    case ( home.connection, diff > 5000 ) of
-                        ( Disconnected, True ) ->
-                            ( { home | lastConnectionMillis = nowMillis }, Boot.startWebsocket )
+                    else
+                        ( home, Cmd.none )
 
-                        _ ->
-                            ( home, Cmd.none )
-            in
-            ( nextHome, cmd )
+                ( _, _ ) ->
+                    ( home, Cmd.none )
 
         RawWebsocket outerPayload ->
             let
                 parsed =
-                    parseMessage outerPayload
+                    JD.decodeString outerResponseDecoder outerPayload
             in
             case parsed of
                 Ok parsedMessage ->
                     case ( parsedMessage.kind, parsedMessage.connected ) of
                         ( "control", Just True ) ->
-                            ( { home | connection = Websocket False }, Cmd.none )
+                            ( { home | lastWebsocketReconnect = Nothing, connection = Websocket False }, Cmd.none )
 
                         ( "control", Just False ) ->
                             ( { home | connection = Disconnected, history = [] }, Cmd.none )
@@ -260,16 +259,28 @@ update message ( home, env, key ) =
             ( { home | currentInput = value }, Cmd.none )
 
 
+bumpTick : HomePage -> HomePage
+bumpTick home =
+    let
+        oldTick =
+            home.requestTick
+
+        pending =
+            Set.insert oldTick home.pendingTicks
+
+        newTick =
+            oldTick + 1
+    in
+    { home | requestTick = newTick, pendingTicks = pending }
+
+
 consumeInput : HomePage -> String -> HomePage
 consumeInput home payload =
     let
-        newTick =
-            home.requestTick + 1
-
         newHistory =
             List.append home.history [ SS.SentCommand payload ]
     in
-    { home | requestTick = newTick, lastRequest = Pending, currentInput = "", history = newHistory }
+    bumpTick { home | lastRequest = Pending, currentInput = "", history = newHistory }
 
 
 onKeyUp : (Int -> msg) -> Html.Attribute msg
@@ -293,6 +304,7 @@ view homePage =
 
             Terminal ->
                 viewTerminal homePage
+        , Html.div [] [ Html.text ("Pending Ticks: " ++ String.fromInt (Set.size homePage.pendingTicks)) ]
         ]
 
 
@@ -432,8 +444,11 @@ renderHistoryEntry entry =
                 ]
 
 
-decoder : JD.Decoder WebsocketResponse
-decoder =
+outerResponseDecoder : JD.Decoder WebsocketResponse
+outerResponseDecoder =
+    -- TODO(port-cleanup) Whenever we receive a message through our `port`, it is sent into the elm runtime
+    -- through the same message kind, whether it was actually prodiced by the boot runtime or the main rust
+    -- websocket runtime.
     JD.map4 WebsocketResponse
         (JD.field "kind" JD.string)
         (JD.maybe (JD.field "connected" JD.bool))
@@ -441,52 +456,20 @@ decoder =
         (JD.maybe (JD.field "payload" JD.string))
 
 
-parseMessage : String -> Result JD.Error WebsocketResponse
-parseMessage inner =
-    JD.decodeString decoder inner
-
-
 handleInnerWebsocketMessage : HomePage -> String -> ( HomePage, Cmd Message )
 handleInnerWebsocketMessage home message =
     let
         parsed =
             SS.parseMessage message
-
-        -- todo: here we are saying that any time we recieve a websocket message from the server,
-        -- if we are currently configuring and waiting for a response, we stay on that page. Otherwise,
-        -- we automatically exchange ourselves for the terminal view.
-        nextView =
-            case home.view of
-                Configure configurationState ->
-                    let
-                        attemptState =
-                            case ( configurationState.lastAttempt, parsed ) of
-                                ( Pending, Ok (SS.State state) ) ->
-                                    Done (Ok ())
-
-                                _ ->
-                                    configurationState.lastAttempt
-
-                        goToTerminal =
-                            case attemptState of
-                                Done (Ok _) ->
-                                    True
-
-                                _ ->
-                                    False
-                    in
-                    if goToTerminal then
-                        Terminal
-
-                    else
-                        Configure { configurationState | lastAttempt = attemptState }
-
-                Terminal ->
-                    Terminal
     in
     case parsed of
-        Ok (SS.Response stuff) ->
-            ( { home | lastRequest = Done (Ok ()), view = nextView }, Cmd.none )
+        Ok (SS.Response requestResponse) ->
+            let
+                hasTick =
+                    Set.member requestResponse.tick home.pendingTicks
+            in
+            Debug.log (Debug.toString hasTick)
+                ( { home | lastRequest = Done (Ok ()) }, Cmd.none )
 
         Ok (SS.State state) ->
             let
@@ -497,10 +480,10 @@ handleInnerWebsocketMessage home message =
                     else
                         Websocket False
             in
-            ( { home | history = state.history, view = nextView, connection = nextConnection }, Cmd.none )
+            ( { home | history = state.history, connection = nextConnection }, Cmd.none )
 
         Err error ->
-            ( { home | lastError = Just (JD.errorToString error), view = nextView }, Cmd.none )
+            ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
 
 
 filesDecoder : JD.Decoder (List File.File)
@@ -557,7 +540,7 @@ sendConfig home =
                 _ ->
                     Cmd.none
     in
-    ( nextHome, cmd )
+    ( bumpTick nextHome, cmd )
 
 
 makePending : HomePage -> HomePage
