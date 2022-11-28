@@ -468,8 +468,7 @@ handleInnerWebsocketMessage home message =
                 hasTick =
                     Set.member requestResponse.tick home.pendingTicks
             in
-            Debug.log (Debug.toString hasTick)
-                ( { home | lastRequest = Done (Ok ()) }, Cmd.none )
+            ( { home | lastRequest = Done (Ok ()) }, Cmd.none )
 
         Ok (SS.State state) ->
             let

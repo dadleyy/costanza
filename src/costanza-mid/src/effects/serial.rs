@@ -122,7 +122,7 @@ where
           let new_port = serialport::new(&config.device, config.baud)
             .open()
             .map_err(|error| {
-              tracing::warn!("unable to open {:?} port - {error}", config);
+              tracing::warn!("[{:?}] unable to open {:?} port - {error}", error.kind(), config);
               error
             })
             .ok();

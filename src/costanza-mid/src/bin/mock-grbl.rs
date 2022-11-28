@@ -75,63 +75,48 @@ impl Machine {
 }
 
 fn main() -> io::Result<()> {
+  let (mut main, mut secondary) = serialport::TTYPort::pair()?;
+  println!("main[{:?}] secondary[{:?}]", main.name(), secondary.name());
+  let mut tick = 0u32;
+  let mut last_debug = std::time::Instant::now();
+  let mut machine = Machine::default();
+
+  secondary.set_exclusive(false)?;
+
   loop {
-    let (mut main, secondary) = serialport::TTYPort::pair()?;
-    println!("main[{:?}] secondary[{:?}]", main.name(), secondary.name());
-    let mut tick = 0u32;
-    let mut last_debug = std::time::Instant::now();
-    let mut last_read = std::time::Instant::now();
-    let mut machine = Machine::default();
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let now = std::time::Instant::now();
 
-    main.set_exclusive(false)?;
+    if now.duration_since(last_debug).as_secs() > 5 {
+      last_debug = now;
+      println!("[{tick}] process loop (ex: {})", main.exclusive());
+    }
 
-    'inner: loop {
-      std::thread::sleep(std::time::Duration::from_millis(10));
-      let now = std::time::Instant::now();
+    tick += 1;
+    let mut buffer = [0u8; 1024];
 
-      if now.duration_since(last_debug).as_secs() > 5 {
-        last_debug = now;
-        println!("[{tick}] process loop");
-      }
+    match io::Read::read(&mut main, &mut buffer) {
+      Ok(amount) => {
+        let parsed = std::str::from_utf8(&buffer[0..amount]);
+        println!("read {} bytes - {parsed:?}", amount);
 
-      // TODO: attempts to connect to a previously disconnected pseudo terminal return a "device
-      // or resource busy" error. To replicate:
-      //
-      // 1. run this "mock"
-      // 2. run the `costanza-m` application configured to the pty location printed from the mock
-      // 3. terminate the `costanza-m` application
-      // 4. run the `costanza-m` application again
-      //    ^-- The application will fail to connect.
-      //
-      // There might be a problem with the way the pty is being created above.
-      if now.duration_since(last_read).as_secs() > 10 {
-        eprintln!("restarting connection");
-        break 'inner;
-      }
-
-      tick += 1;
-      let mut buffer = [0u8; 1024];
-      match io::Read::read(&mut main, &mut buffer) {
-        Ok(amount) => {
-          let parsed = std::str::from_utf8(&buffer[0..amount]);
-          println!("read {} bytes - {parsed:?}", amount);
-
-          if let Ok(valid_utf8) = parsed {
-            if let Some(response) = machine.update(Message::Command(valid_utf8.trim_end()))? {
-              writeln!(&mut main, "{response}").expect("failed writing response");
-            }
+        if let Ok(valid_utf8) = parsed {
+          if let Some(response) = machine.update(Message::Command(valid_utf8.trim_end()))? {
+            writeln!(&mut main, "{response}").expect("failed writing response");
           }
-
-          last_read = std::time::Instant::now();
         }
-        Err(error) if error.kind() == io::ErrorKind::TimedOut => {
-          machine.update(Message::Tick(std::time::Instant::now()))?;
-        }
-        Err(error) => {
-          println!("unable to read - {error}");
-          break;
-        }
+      }
+      Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+        secondary.set_exclusive(false)?;
+        machine.update(Message::Tick(std::time::Instant::now()))?;
+      }
+      Err(error) => {
+        println!("unable to read - {error}");
+        break;
       }
     }
   }
+
+  eprintln!("closing mock grbl");
+  Ok(())
 }
