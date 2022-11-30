@@ -58,8 +58,8 @@ impl std::str::FromStr for Response {
   type Err = io::Error;
 
   fn from_str(input: &str) -> Result<Self, Self::Err> {
-    match input {
-      "ok" => Ok(Self::Ok),
+    match input.trim() {
+      "ok" | "Ok" | "OK" => Ok(Self::Ok),
       status if status.starts_with('<') => {
         let chars = status.chars().skip(1);
         let state = chars
