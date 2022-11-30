@@ -174,7 +174,10 @@ impl FileQueue {
 
   fn update(&mut self, response: &grbl::Response) {
     match response {
-      grbl::Response::Ok => self.waiting = false,
+      grbl::Response::Ok => {
+        tracing::info!("no longer waiting, will send next line {:?}", self.pending.get(0));
+        self.waiting = false;
+      }
       other => tracing::warn!("file queue not ready to handle '{other:?}'"),
     }
   }
@@ -467,6 +470,7 @@ impl crate::eff::Application for Application {
 
       Message::Serial(data) => {
         tracing::debug!("has serial data - {data}");
+
         match data.parse::<grbl::Response>() {
           Ok(inner) => {
             if let SerialConnectionState::SendingFile(queue, _) = &mut next.serial.connection {
@@ -555,7 +559,10 @@ impl crate::eff::Application for Application {
               SerialConnectionState::SendingFile(queue, status)
             }
             FileQueueNext::Waiting => SerialConnectionState::SendingFile(queue, status),
-            FileQueueNext::Done => SerialConnectionState::Idle(None, status),
+            FileQueueNext::Done => {
+              tracing::info!("file queue exhausted, moving to idle");
+              SerialConnectionState::Idle(None, status)
+            }
           };
 
           return (next, Some(cmds));

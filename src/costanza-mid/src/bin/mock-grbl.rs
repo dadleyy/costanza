@@ -35,8 +35,8 @@ impl std::fmt::Display for MovementState {
 struct Machine {
   last_tick: Option<std::time::Instant>,
   movement: MovementState,
-  mpos: (i32, i32, i32),
-  wpos: (i32, i32, i32),
+  mpos: (f32, f32, f32),
+  wpos: (f32, f32, f32),
 }
 
 impl Machine {
@@ -47,7 +47,10 @@ impl Machine {
           println!("returning status info");
           let (mx, my, mz) = &self.mpos;
           let (wx, wy, wz) = &self.wpos;
-          let status = format!("<{},MPos:{mx},{my},{mz},WPos:{wx},{wy},{wz}>", self.movement);
+          let status = format!(
+            "<{},MPos:{mx:.3},{my:.3},{mz:.3},WPos:{wx:.3},{wy:.3},{wz:.3}>",
+            self.movement
+          );
           return Ok(Some(status));
         }
         cmd => {

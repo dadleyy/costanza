@@ -86,16 +86,16 @@ type alias WebsocketResponse =
     }
 
 
-init : Nav.Key -> Url.Url -> HomePage
-init key url =
+init : Env.Environment -> Nav.Key -> Url.Url -> HomePage
+init env key url =
     { lastRequest = NotAsked
     , requestTick = 1
     , pendingTicks = Set.empty
     , key = key
     , history = []
     , view =
-        case url.path of
-            "/home/settings" ->
+        case String.dropLeft (String.length env.uiRoot) url.path of
+            "home/settings" ->
                 Configure { device = "", baud = 0, lastAttempt = NotAsked }
 
             _ ->

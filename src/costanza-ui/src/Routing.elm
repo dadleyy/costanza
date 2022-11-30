@@ -36,7 +36,7 @@ authorized : Env.Environment -> Url.Url -> Nav.Key -> Session.SessionUserData ->
 authorized env url key session =
     case String.startsWith (env.uiRoot ++ "home") url.path of
         True ->
-            ( Home (HomePage.init key url), Cmd.none )
+            ( Home (HomePage.init env key url), Cmd.none )
 
         False ->
             ( Loading, Nav.replaceUrl key (env.uiRoot ++ "home/terminal") )

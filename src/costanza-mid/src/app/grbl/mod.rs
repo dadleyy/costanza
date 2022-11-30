@@ -41,11 +41,11 @@ impl std::str::FromStr for MachineState {
 #[derive(Debug, Clone, Copy)]
 pub struct MachinePosition {
   #[allow(dead_code)]
-  x: i32,
+  x: f32,
   #[allow(dead_code)]
-  y: i32,
+  y: f32,
   #[allow(dead_code)]
-  z: i32,
+  z: f32,
 }
 
 #[derive(Debug)]
@@ -73,13 +73,13 @@ impl std::str::FromStr for Response {
           [header, raw_y, raw_z, _, _, _] if header.starts_with("MPos:") => {
             let x = header
               .trim_start_matches("MPos:")
-              .parse::<i32>()
+              .parse::<f32>()
               .map_err(|error| io::Error::new(io::ErrorKind::Other, format!("bad machine pos - {error}")))?;
             let y = raw_y
-              .parse::<i32>()
+              .parse::<f32>()
               .map_err(|error| io::Error::new(io::ErrorKind::Other, format!("bad machine pos - {error}")))?;
             let z = raw_z
-              .parse::<i32>()
+              .parse::<f32>()
               .map_err(|error| io::Error::new(io::ErrorKind::Other, format!("bad machine pos - {error}")))?;
             tracing::info!("found machine pos ({x}, {y}, {z})");
             Ok(Self::Status(state, MachinePosition { x, y, z }))
