@@ -16,7 +16,8 @@ body {
 
 a,
 button,
-input[type="text"] {
+input[type="text"],
+input[type="number"] {
   @apply block;
   @apply px-3 py-2;
 }
@@ -63,10 +64,16 @@ button:not(:disabled).bg-blue {
   @apply text-blue-300;
 }
 
-button:not(:disabled).button-warning {
+button:not(:disabled).button-secondary {
   @apply text-gray-50;
   @apply bg-gray-500;
   @apply border-gray-400;
+}
+
+button:not(:disabled).button-warning {
+  @apply text-rose-50;
+  @apply bg-rose-500;
+  @apply border-rose-400;
 }
 
 button:disabled {
@@ -79,14 +86,16 @@ button:disabled {
   @apply rounded-sm;
 }
 
-input[type="text"]:disabled {
+input[type="text"]:disabled,
+input[type="number"]:disabled {
   @apply block;
   @apply bg-slate-800;
   @apply text-slate-100;
   opacity: 0.5;
 }
 
-input[type="text"]:not(:disabled) {
+input[type="text"]:not(:disabled),
+input[type="number"]:not(:disabled) {
   @apply block;
   @apply bg-slate-800;
   @apply text-slate-100;

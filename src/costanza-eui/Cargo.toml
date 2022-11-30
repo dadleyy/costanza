@@ -1,0 +1,11 @@
+[package]
+name = "costanza-eui"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.5.2", features = ["glow"], default-features = false }
+dotenv = { version = "^0.15" }
+clap = { version = "4.0.27", features = ["derive", "cargo"] }
+toml = "0.5.9"
+serde = { version = "1.0.147", features = ["derive"] }

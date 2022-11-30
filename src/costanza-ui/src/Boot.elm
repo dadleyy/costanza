@@ -13,6 +13,6 @@ startWebsocket : Cmd a
 startWebsocket =
     let
         message =
-            JE.object [ ( "kind", JE.string "control" ) ]
+            JE.object [ ( "kind", JE.string "control" ), ( "command", JE.string "connect" ) ]
     in
     sendMessage (JE.encode 0 message)

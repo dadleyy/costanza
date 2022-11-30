@@ -80,11 +80,12 @@ jobs:
           name: costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
           path: src/costanza-ui/costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
 
-  build-mid-latest:
+  # rust test + clippy
+  build-x86:
+    name: "x86_64-unknown-linux-gnu compilation"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
       - name: "rustup - download"
         run: curl --output /tmp/install-rust.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
       - name: "rustup - install"
@@ -94,69 +95,54 @@ jobs:
       - name: "cargo clippy"
         run: . $HOME/.cargo/env && cargo clippy
 
-  # rust middleware compilation
-  build-mid-armv7:
+  build-armv7:
+    name: "armv7-unknown-linux-gnueabihf compilation"
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
     container:
-      image: dadleyy/ubuntu-bionic-cross-compiler:latest
+      image: ghcr.io/iced-rs/armv7:latest
     steps:
       - uses: actions/checkout@v3
-
       - name: "set output: verify git version"
         run: git --version
-
       - name: "set output: short_sha"
         id: vars
         run: echo "SHA_SHORT=$(echo $GITHUB_SHA | head -c 7)">>$GITHUB_OUTPUT
       - name: "set output: verify"
         run: echo "${{ steps.vars.outputs.SHA_SHORT }}"
+      - name: "basic - whoami"
+        run: "whoami"
 
       - name: "apt - update"
         run: apt-get update
-      - name: "apt - install libudev-dev"
-        run: apt-get install libudev-dev pkg-config clang -y
-
-      - name: "rustup - download"
-        run: curl --output /tmp/install-rust.sh --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
-
-      - name: "rustup - install"
-        run: sh /tmp/install-rust.sh -y
-      - name: "rustup - target add"
-        run: . /root/.cargo/env && rustup target add armv7-unknown-linux-gnueabihf
-      - name: "rustup - component add"
-        run: . /root/.cargo/env && rustup component add --target armv7-unknown-linux-gnueabihf rust-src rust-std rustc-dev
-
-      # main application compliation:
-      - name: "cargo - whoami"
-        run: "whoami"
+      - name: "apt - install things"
+        run: apt-get install libssl-dev:armhf -y
 
       - name: "cargo - build"
         run: ". /root/.cargo/env && cargo build --target armv7-unknown-linux-gnueabihf --release --no-default-features"
         env:
-          PKG_CONFIG_SYSROOT_DIR: /usr/arm-linux-gnueabihf
-          OPENSSL_LIB_DIR: /etc/arm-dependencies/openssl-3.0.7
-          OPENSSL_INCLUDE_DIR: /etc/arm-dependencies/openssl-3.0.7/include
           COSTANZA_VERSION: "${{ steps.vars.outputs.SHA_SHORT }}"
 
       # bundling + artifact generation:
       - name: "bundle - prepare"
-        run: mkdir -p costanza-mid-dist/bin
-      - name: "bundle - populate"
-        run: cp target/armv7-unknown-linux-gnueabihf/release/costanza-m costanza-mid-dist/bin/costanza-m
+        run: mkdir -p costanza-dist/bin
+      - name: "bundle - populate (costanza-m)"
+        run: cp target/armv7-unknown-linux-gnueabihf/release/costanza-m costanza-dist/bin/costanza-m
+      - name: "bundle - populate (costanza-eui)"
+        run: cp target/armv7-unknown-linux-gnueabihf/release/costanza-eui costanza-dist/bin/costanza-eui
       - name: "bundle - create"
-        run: tar cvzf costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz costanza-mid-dist
+        run: tar cvzf costanza-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz costanza-dist
 
       - uses: actions/upload-artifact@v3
         with:
-          name: costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
-          path: costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
+          name: costanza-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
+          path: costanza-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz
 
   publish:
     runs-on: ubuntu-latest
-    needs: ["build-ui", "build-mid-armv7"]
+    needs: ["build-ui", "build-armv7"]
     steps:
       - uses: actions/checkout@v3
 
@@ -168,7 +154,7 @@ jobs:
 
       - uses: actions/download-artifact@v3
         with:
-          name: "costanza-mid-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz"
+          name: "costanza-armv7-unknown-linux-gnueabihf-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz"
       - uses: actions/download-artifact@v3
         with:
           name: "costanza-ui-${{ steps.vars.outputs.SHA_SHORT }}.tar.gz"
