@@ -164,10 +164,10 @@ update message ( home, env, key ) =
                 next =
                     case home.view of
                         Configure _ ->
-                            "/home/terminal"
+                            env.uiRoot ++ "home/terminal"
 
                         Terminal ->
-                            "/home/settings"
+                            env.uiRoot ++ "home/settings"
             in
             ( home, Nav.replaceUrl key next )
 
@@ -199,14 +199,8 @@ update message ( home, env, key ) =
         Noop ->
             ( home, Cmd.none )
 
-        KeyUp TerminalInputKeyUp 13 ->
-            sendConfig home
-
         KeyUp ConfigurationFormKeyup 13 ->
             sendConfig home
-
-        KeyUp _ _ ->
-            ( home, Cmd.none )
 
         Tick posixValue ->
             case ( home.connection, home.lastWebsocketReconnect ) of
@@ -251,8 +245,20 @@ update message ( home, env, key ) =
         AttemptSend payload ->
             ( consumeInput home payload, sendInputMessage payload home.requestTick )
 
+        KeyUp TerminalInputKeyUp 13 ->
+            case String.isEmpty home.currentInput of
+                True ->
+                    ( home, Cmd.none )
+
+                False ->
+                    ( consumeInput home home.currentInput, sendInputMessage home.currentInput home.requestTick )
+
         UpdateHomeInput value ->
             ( { home | currentInput = value }, Cmd.none )
+
+        -- Disregard any keyup events that are not already dealt with.
+        KeyUp _ _ ->
+            ( home, Cmd.none )
 
 
 bumpTick : HomePage -> HomePage
@@ -274,7 +280,7 @@ consumeInput : HomePage -> String -> HomePage
 consumeInput home payload =
     let
         newHistory =
-            List.append home.history [ SS.SentCommand payload ]
+            List.append home.history [ SS.SentRequest { tick = home.requestTick, request = SS.RawSerial payload } ]
     in
     bumpTick (makePending { home | currentInput = "", history = newHistory })
 
@@ -423,11 +429,16 @@ viewTerminal homePage =
 renderHistoryEntry : SS.StateHistoryEntry -> Html.Html Message
 renderHistoryEntry entry =
     case entry of
-        SS.SentCommand message ->
-            Html.div [ AT.class "flex items-center" ]
-                [ Html.div [ AT.class "mr-4" ] [ Icon.view Icon.ChevronLeft ]
-                , Html.div [] [ Html.text message ]
-                ]
+        SS.SentRequest requestEntry ->
+            case requestEntry.request of
+                SS.Unknown ->
+                    Html.div [] [ Html.text "<redacted>" ]
+
+                SS.RawSerial message ->
+                    Html.div [ AT.class "flex items-center" ]
+                        [ Html.div [ AT.class "mr-4" ] [ Icon.view Icon.ChevronLeft ]
+                        , Html.div [] [ Html.text message ]
+                        ]
 
         SS.ReceivedData message ->
             Html.div [ AT.class "flex items-center" ]

@@ -34,12 +34,12 @@ view route =
 
 authorized : Env.Environment -> Url.Url -> Nav.Key -> Session.SessionUserData -> ( Route, Cmd Message )
 authorized env url key session =
-    case String.startsWith "/home" url.path of
+    case String.startsWith (env.uiRoot ++ "home") url.path of
         True ->
             ( Home (HomePage.init key url), Cmd.none )
 
         False ->
-            ( Loading, Nav.replaceUrl key "/home/terminal" )
+            ( Loading, Nav.replaceUrl key (env.uiRoot ++ "home/terminal") )
 
 
 update : Env.Environment -> Nav.Key -> Message -> Route -> ( Route, Cmd Message )

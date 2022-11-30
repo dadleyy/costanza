@@ -1,4 +1,4 @@
-module StateSync exposing (ResponseContent, StateHistoryEntry(..), StatePayload, StateSyncKinds(..), parseMessage)
+module StateSync exposing (ResponseContent, SentRequestKinds(..), StateHistoryEntry(..), StatePayload, StateSyncKinds(..), parseMessage)
 
 import Json.Decode as JD
 
@@ -16,14 +16,40 @@ type alias ResponseContent =
     }
 
 
+type SentRequestKinds
+    = RawSerial String
+    | Unknown
+
+
+type alias SentRequestEntry =
+    { tick : Int
+    , request : SentRequestKinds
+    }
+
+
 type StateSyncKinds
     = State StatePayload
     | Response ResponseContent
 
 
 type StateHistoryEntry
-    = SentCommand String
+    = SentRequest SentRequestEntry
     | ReceivedData String
+
+
+sentRequestKindDecoder : String -> JD.Decoder SentRequestKinds
+sentRequestKindDecoder payload =
+    case payload of
+        "raw_serial" ->
+            JD.field "value" JD.string |> JD.andThen (\data -> JD.succeed (RawSerial data))
+
+        _ ->
+            JD.succeed Unknown
+
+
+sentRequestDecoder : JD.Decoder SentRequestKinds
+sentRequestDecoder =
+    JD.field "kind" JD.string |> JD.andThen sentRequestKindDecoder
 
 
 kindDecoder : String -> JD.Decoder StateHistoryEntry
@@ -33,7 +59,10 @@ kindDecoder kind =
             JD.field "content" JD.string |> JD.map ReceivedData
 
         "sent_command" ->
-            JD.field "value" JD.string |> JD.map SentCommand
+            JD.map2 SentRequestEntry
+                (JD.field "tick" JD.int)
+                (JD.field "request" sentRequestDecoder)
+                |> JD.map SentRequest
 
         _ ->
             JD.fail ("unrecognized history kind: " ++ kind)

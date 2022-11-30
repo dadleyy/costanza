@@ -13,11 +13,12 @@ impl std::fmt::Display for Command {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum MachineState {
   Run,
   Idle,
   Home,
+  Alarm,
 }
 
 impl std::str::FromStr for MachineState {
@@ -28,6 +29,7 @@ impl std::str::FromStr for MachineState {
       "Idle" => Ok(Self::Idle),
       "Run" => Ok(Self::Run),
       "Home" => Ok(Self::Home),
+      "Alarm" => Ok(Self::Alarm),
       unknown => Err(io::Error::new(
         io::ErrorKind::Other,
         format!("bad machine state - {unknown}"),
@@ -36,7 +38,7 @@ impl std::str::FromStr for MachineState {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct MachinePosition {
   #[allow(dead_code)]
   x: i32,

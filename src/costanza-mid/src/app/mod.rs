@@ -203,17 +203,25 @@ impl FileQueue {
 enum SerialConnectionState {
   #[default]
   Disconnected,
-
-  Idle(Option<std::time::Instant>),
-
   PendingAttempt,
-
-  SendingFile(FileQueue),
+  Idle(
+    Option<std::time::Instant>,
+    Option<(grbl::MachineState, grbl::MachinePosition)>,
+  ),
+  SendingFile(FileQueue, Option<(grbl::MachineState, grbl::MachinePosition)>),
 }
 
 impl SerialConnectionState {
   fn available(&self) -> bool {
-    matches!(&self, SerialConnectionState::Idle(_))
+    matches!(&self, SerialConnectionState::Idle(_, _))
+  }
+
+  fn update_status(&mut self, status: (grbl::MachineState, grbl::MachinePosition)) {
+    match self {
+      Self::SendingFile(_, other) => std::mem::swap(other, &mut Some(status)),
+      Self::Idle(_, other) => std::mem::swap(other, &mut Some(status)),
+      _ => (),
+    }
   }
 }
 
@@ -299,7 +307,7 @@ impl crate::eff::Application for Application {
         // being received.
         next.serial.connection = if serial_available {
           tracing::info!("serial connection available + idle");
-          SerialConnectionState::Idle(None)
+          SerialConnectionState::Idle(None, None)
         } else {
           tracing::warn!("serial connection disconnect");
           SerialConnectionState::Disconnected
@@ -323,7 +331,7 @@ impl crate::eff::Application for Application {
 
         tracing::info!("has uploaded file ({file_contents:?})");
         let queue = FileQueue::from_str(&file_contents);
-        next.serial.connection = SerialConnectionState::SendingFile(queue);
+        next.serial.connection = SerialConnectionState::SendingFile(queue, None);
         return (next, None);
       }
 
@@ -461,9 +469,17 @@ impl crate::eff::Application for Application {
         tracing::debug!("has serial data - {data}");
         match data.parse::<grbl::Response>() {
           Ok(inner) => {
-            if let SerialConnectionState::SendingFile(queue) = &mut next.serial.connection {
+            if let SerialConnectionState::SendingFile(queue, _) = &mut next.serial.connection {
               queue.update(&inner);
             }
+
+            // For now, persist this status message on our application. Eventually we will want to
+            // build this into the connection enum itself somehow; even idle connections should
+            // have a status.
+            if let grbl::Response::Status(state, pos) = inner {
+              next.serial.connection.update_status((state, pos));
+            }
+
             tracing::info!("parsed grbl response = {inner:?}");
           }
           Err(error) => {
@@ -526,7 +542,7 @@ impl crate::eff::Application for Application {
 
         // Start by seeing if we are sending a file over. If so, we will attempt to take the next
         // line off the contents and push a raw serial cmd onto our return vector.
-        if let SerialConnectionState::SendingFile(mut queue) = next.serial.connection {
+        if let SerialConnectionState::SendingFile(mut queue, status) = next.serial.connection {
           next.serial.connection = match queue.next() {
             FileQueueNext::Ready(next_line) => {
               // We have a line, grab the contents and create a raw serial command for it.
@@ -536,16 +552,16 @@ impl crate::eff::Application for Application {
               // TODO: our lines iterator trims the newline off the rest of our lines. There is
               // probably a way to do this so we hold into the original iterator instead of
               // manipulating it back and forth between iterator and concrete string.
-              SerialConnectionState::SendingFile(queue)
+              SerialConnectionState::SendingFile(queue, status)
             }
-            FileQueueNext::Waiting => SerialConnectionState::SendingFile(queue),
-            FileQueueNext::Done => SerialConnectionState::Idle(None),
+            FileQueueNext::Waiting => SerialConnectionState::SendingFile(queue, status),
+            FileQueueNext::Done => SerialConnectionState::Idle(None, status),
           };
 
           return (next, Some(cmds));
         }
 
-        if let SerialConnectionState::Idle(last_ping) = next.serial.connection {
+        if let SerialConnectionState::Idle(last_ping, _) = next.serial.connection {
           let now = std::time::Instant::now();
           let mut is_old = last_ping.is_none();
 
@@ -555,7 +571,7 @@ impl crate::eff::Application for Application {
 
           if is_old {
             tracing::info!("sending new ping to serial");
-            next.serial.connection = SerialConnectionState::Idle(Some(now));
+            next.serial.connection = SerialConnectionState::Idle(Some(now), None);
             cmds.push(Command::Serial(SerialCommand::Status));
           }
         }
