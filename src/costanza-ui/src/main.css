@@ -20,6 +20,9 @@ input[type="text"],
 input[type="number"] {
   @apply block;
   @apply px-3 py-2;
+  /* todo: hopefully we don't ever find ourselves where this is honored, but we need a way to make sure
+   * these elements don't hog unnecessary space on smaller screens. */
+  @apply min-w-0;
 }
 
 a,

@@ -320,8 +320,8 @@ viewConfiguration home config =
                 _ ->
                     False
     in
-    Html.div [ AT.class "flex items-center w-full px-8" ]
-        [ Html.div [ AT.class "mr-4 flex-1" ]
+    Html.div [ AT.class "lg:flex items-center w-full px-8" ]
+        [ Html.div [ AT.class "mr-4 flex-1 mb-4 lg:mb-0" ]
             [ Html.input
                 [ AT.type_ "text"
                 , AT.class "block w-full"
@@ -333,7 +333,7 @@ viewConfiguration home config =
                 ]
                 []
             ]
-        , Html.div [ AT.class "mr-4 flex-1" ]
+        , Html.div [ AT.class "mr-4 flex-1 mb-4 lg:mb-0" ]
             [ Html.input
                 [ AT.type_ "number"
                 , AT.class "block w-full"
@@ -345,17 +345,19 @@ viewConfiguration home config =
                 ]
                 []
             ]
-        , Html.div [ AT.class "mr-4 relative" ]
-            [ Button.view
-                ( Button.Icon Icon.Plane SubmitConfig, Button.disabledOr isPending Button.Primary )
-            ]
-        , Html.div [ AT.class "mr-4 relative" ]
-            [ Button.view
-                ( Button.Icon Icon.Sync (RequestConnection True), Button.disabledOr isPending Button.Secondary )
-            ]
-        , Html.div [ AT.class "relative" ]
-            [ Button.view
-                ( Button.Icon Icon.Close (RequestConnection False), Button.disabledOr isPending Button.Warning )
+        , Html.div [ AT.class "flex items-center justify-center lg:justify-start" ]
+            [ Html.div [ AT.class "mr-4 relative" ]
+                [ Button.view
+                    ( Button.Icon Icon.Plane SubmitConfig, Button.disabledOr isPending Button.Primary )
+                ]
+            , Html.div [ AT.class "mr-4 relative" ]
+                [ Button.view
+                    ( Button.Icon Icon.Sync (RequestConnection True), Button.disabledOr isPending Button.Secondary )
+                ]
+            , Html.div [ AT.class "relative" ]
+                [ Button.view
+                    ( Button.Icon Icon.Close (RequestConnection False), Button.disabledOr isPending Button.Warning )
+                ]
             ]
         ]
 
@@ -403,7 +405,7 @@ viewTerminal homePage =
                 ( Button.Icon Icon.Plane (AttemptSend homePage.currentInput)
                 , Button.disabledOr (String.isEmpty homePage.currentInput || isDisabled) Button.Primary
                 )
-            , Html.div [ AT.class "ml-4 relative" ]
+            , Html.div [ AT.class "hidden lg:block ml-4 relative" ]
                 [ Html.label [ AT.class "relative block" ]
                     [ Html.input
                         [ AT.class "absolute w-full h-full inset-0 opacity-0"
@@ -417,7 +419,7 @@ viewTerminal homePage =
                     ]
                 ]
             ]
-        , Html.div [ AT.class "w-full flex-1 px-8 mt-4" ]
+        , Html.div [ AT.class "w-full flex-1 lg:px-8 mt-4" ]
             [ Html.div [ AT.class "code-container w-full" ]
                 [ Html.code [ AT.class "scrollback-terminal" ]
                     (List.map renderHistoryEntry (List.reverse homePage.history))
