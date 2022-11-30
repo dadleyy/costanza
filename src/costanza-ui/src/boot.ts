@@ -104,6 +104,9 @@ type TElmMessage =
       });
       messageCount += 1;
 
+      // Pass along the message as a string value within a json-serialized `websocket` message,
+      // where the elm runtime will handle deserializing the outer first, following by the inner
+      // `payload` string.
       app.ports.messageReceiver.send(
         JSON.stringify({ kind: "websocket", payload: event.data as string })
       );

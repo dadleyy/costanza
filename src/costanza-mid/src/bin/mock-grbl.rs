@@ -84,7 +84,6 @@ fn main() -> io::Result<()> {
   secondary.set_exclusive(false)?;
 
   loop {
-    std::thread::sleep(std::time::Duration::from_millis(10));
     let now = std::time::Instant::now();
 
     if now.duration_since(last_debug).as_secs() > 5 {

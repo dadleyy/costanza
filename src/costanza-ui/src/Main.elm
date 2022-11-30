@@ -227,8 +227,11 @@ viewBody model =
                         ]
                     ]
 
-            Authorized activePage _ ->
-                Routing.view activePage |> Html.map RouteMessage
+            Authorized activePage authorizedState ->
+                Html.div [ AT.attribute "data-role" "authorized-container" ]
+                    [ header authorizedState.env authorizedState.session
+                    , Routing.view activePage |> Html.map RouteMessage
+                    ]
 
             Failed _ ->
                 Html.div [ AT.class "relative w-full h-full flex items-center justify-center" ]

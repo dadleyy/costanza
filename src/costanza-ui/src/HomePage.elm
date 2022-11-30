@@ -20,7 +20,7 @@ import Url
 
 type Request
     = Done (Result Http.Error ())
-    | Pending
+    | Pending Int
     | NotAsked
 
 
@@ -237,16 +237,12 @@ update message ( home, env, key ) =
                         ( "control", Just False ) ->
                             ( { home | connection = Disconnected, history = [] }, Cmd.none )
 
-                        ( "response", _ ) ->
-                            ( { home | lastRequest = Done (Ok ()) }, Cmd.none )
-
-                        ( "websocket", _ ) ->
+                        -- If we've received anything other than a control  message, attempt to find the pending
+                        -- attempt to parse the payload which would be a serialized json payload.
+                        ( _, _ ) ->
                             Maybe.withDefault
                                 ( home, Cmd.none )
-                                (Maybe.map (handleInnerWebsocketMessage home) parsedMessage.payload)
-
-                        _ ->
-                            ( home, Cmd.none )
+                                (Maybe.map (handleInnerWebsocketMessage key home) parsedMessage.payload)
 
                 -- TODO: we were unable to parse a websocket message.
                 Err error ->
@@ -280,7 +276,7 @@ consumeInput home payload =
         newHistory =
             List.append home.history [ SS.SentCommand payload ]
     in
-    bumpTick { home | lastRequest = Pending, currentInput = "", history = newHistory }
+    bumpTick (makePending { home | currentInput = "", history = newHistory })
 
 
 onKeyUp : (Int -> msg) -> Html.Attribute msg
@@ -304,12 +300,20 @@ view homePage =
 
             Terminal ->
                 viewTerminal homePage
-        , Html.div [] [ Html.text ("Pending Ticks: " ++ String.fromInt (Set.size homePage.pendingTicks)) ]
         ]
 
 
 viewConfiguration : HomePage -> HomePageConfigurationView -> Html.Html Message
 viewConfiguration home config =
+    let
+        isPending =
+            case config.lastAttempt of
+                Pending _ ->
+                    True
+
+                _ ->
+                    False
+    in
     Html.div [ AT.class "flex items-center w-full px-8" ]
         [ Html.div [ AT.class "mr-4 flex-1" ]
             [ Html.input
@@ -319,7 +323,7 @@ viewConfiguration home config =
                 , EV.onInput UpdateDevice
                 , onKeyUp (KeyUp ConfigurationFormKeyup)
                 , AT.placeholder "Device"
-                , AT.disabled (config.lastAttempt == Pending)
+                , AT.disabled isPending
                 ]
                 []
             ]
@@ -331,39 +335,21 @@ viewConfiguration home config =
                 , onKeyUp (KeyUp ConfigurationFormKeyup)
                 , AT.value (String.fromInt config.baud)
                 , AT.placeholder "Baud"
-                , AT.disabled (config.lastAttempt == Pending)
+                , AT.disabled isPending
                 ]
                 []
             ]
         , Html.div [ AT.class "mr-4 relative" ]
             [ Button.view
-                ( Button.Icon Icon.Plane SubmitConfig
-                , if config.lastAttempt == Pending then
-                    Button.Disabled
-
-                  else
-                    Button.Primary
-                )
+                ( Button.Icon Icon.Plane SubmitConfig, Button.disabledOr isPending Button.Primary )
             ]
         , Html.div [ AT.class "mr-4 relative" ]
             [ Button.view
-                ( Button.Icon Icon.Sync (RequestConnection True)
-                , if config.lastAttempt == Pending then
-                    Button.Disabled
-
-                  else
-                    Button.Secondary
-                )
+                ( Button.Icon Icon.Sync (RequestConnection True), Button.disabledOr isPending Button.Secondary )
             ]
         , Html.div [ AT.class "relative" ]
             [ Button.view
-                ( Button.Icon Icon.Close (RequestConnection False)
-                , if config.lastAttempt == Pending then
-                    Button.Disabled
-
-                  else
-                    Button.Warning
-                )
+                ( Button.Icon Icon.Close (RequestConnection False), Button.disabledOr isPending Button.Warning )
             ]
         ]
 
@@ -372,12 +358,18 @@ viewTerminal : HomePage -> Html.Html Message
 viewTerminal homePage =
     let
         isDisabled =
-            homePage.connection
-                == Disconnected
-                || homePage.lastRequest
-                == Pending
-                || homePage.connection
-                == Websocket False
+            case ( homePage.connection, homePage.lastRequest ) of
+                ( Disconnected, _ ) ->
+                    True
+
+                ( Websocket False, _ ) ->
+                    True
+
+                ( _, Pending _ ) ->
+                    True
+
+                _ ->
+                    False
     in
     Html.div [ AT.class "w-full relative" ]
         [ Html.div [ AT.class "flex items-center w-full px-8" ]
@@ -456,8 +448,13 @@ outerResponseDecoder =
         (JD.maybe (JD.field "payload" JD.string))
 
 
-handleInnerWebsocketMessage : HomePage -> String -> ( HomePage, Cmd Message )
-handleInnerWebsocketMessage home message =
+handleResponseWebsocketMessage : HomePage -> String -> ( HomePage, Cmd Message )
+handleResponseWebsocketMessage home content =
+    ( home, Cmd.none )
+
+
+handleInnerWebsocketMessage : Nav.Key -> HomePage -> String -> ( HomePage, Cmd Message )
+handleInnerWebsocketMessage key home message =
     let
         parsed =
             SS.parseMessage message
@@ -467,8 +464,40 @@ handleInnerWebsocketMessage home message =
             let
                 hasTick =
                     Set.member requestResponse.tick home.pendingTicks
+
+                newPending =
+                    Set.remove requestResponse.tick home.pendingTicks
             in
-            ( { home | lastRequest = Done (Ok ()) }, Cmd.none )
+            case ( requestResponse.status, hasTick, home.view ) of
+                -- Check to see if we're on the configuration page and are holding onto a tick that matches this
+                -- response.
+                ( "ok", True, Configure configuration ) ->
+                    case configuration.lastAttempt of
+                        Pending attemptTick ->
+                            let
+                                clearedAttempt =
+                                    attemptTick == requestResponse.tick
+                            in
+                            case clearedAttempt of
+                                -- At this point we have a match between our attempt and the tick inside a response.
+                                True ->
+                                    let
+                                        updatedConfigView =
+                                            Configure { configuration | lastAttempt = Done (Ok ()) }
+                                    in
+                                    ( { home | pendingTicks = newPending, view = updatedConfigView }, Cmd.none )
+
+                                False ->
+                                    ( home, Cmd.none )
+
+                        _ ->
+                            ( { home | pendingTicks = newPending, lastRequest = Done (Ok ()) }, Cmd.none )
+
+                ( "ok", True, Terminal ) ->
+                    ( { home | pendingTicks = newPending, lastRequest = Done (Ok ()) }, Cmd.none )
+
+                _ ->
+                    ( home, Cmd.none )
 
         Ok (SS.State state) ->
             let
@@ -478,8 +507,21 @@ handleInnerWebsocketMessage home message =
 
                     else
                         Websocket False
+
+                redirCommand =
+                    case ( nextConnection, home.connection, home.view ) of
+                        ( Websocket True, Websocket False, Configure configuration ) ->
+                            case configuration.lastAttempt of
+                                Done _ ->
+                                    Nav.replaceUrl key "/home/terminal"
+
+                                _ ->
+                                    Cmd.none
+
+                        _ ->
+                            Cmd.none
             in
-            ( { home | history = state.history, connection = nextConnection }, Cmd.none )
+            ( { home | history = state.history, connection = nextConnection }, redirCommand )
 
         Err error ->
             ( { home | lastError = Just (JD.errorToString error) }, Cmd.none )
@@ -549,7 +591,7 @@ makePending home =
             home
 
         Configure config ->
-            { home | view = Configure { config | lastAttempt = Pending } }
+            { home | view = Configure { config | lastAttempt = Pending home.requestTick } }
 
 
 

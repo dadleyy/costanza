@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod grbl;
+
 use crate::effects;
 use futures_lite::future::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -58,7 +60,7 @@ impl std::fmt::Display for SerialCommand {
   fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
     match &self {
       SerialCommand::Raw(inner) => writeln!(formatter, "{inner}"),
-      SerialCommand::Status => writeln!(formatter, "?"),
+      SerialCommand::Status => write!(formatter, "{}", grbl::Command::Status),
       _ => Ok(()),
     }
   }
@@ -144,6 +146,59 @@ enum ResponseKinds<'a> {
   Response(ClientResponse),
 }
 
+#[derive(Debug)]
+struct FileQueue {
+  pending: Vec<String>,
+  waiting: bool,
+  sent: Vec<String>,
+}
+
+enum FileQueueNext {
+  Ready(String),
+  Waiting,
+  Done,
+}
+
+impl FileQueue {
+  fn from_str<S>(target: S) -> Self
+  where
+    S: AsRef<str>,
+  {
+    let lines = target.as_ref().lines().map(String::from).collect();
+    Self {
+      pending: lines,
+      waiting: false,
+      sent: vec![],
+    }
+  }
+
+  fn update(&mut self, response: &grbl::Response) {
+    match response {
+      grbl::Response::Ok => self.waiting = false,
+      other => tracing::warn!("file queue not ready to handle '{other:?}'"),
+    }
+  }
+
+  fn next(&mut self) -> FileQueueNext {
+    if self.waiting {
+      return FileQueueNext::Waiting;
+    }
+
+    let next = match self.pending.len() {
+      0 => self.pending.pop(),
+      _ => self.pending.drain(0..1).next(),
+    };
+
+    if let Some(borrowed) = next {
+      self.waiting = true;
+      self.sent.push(borrowed.clone());
+      return FileQueueNext::Ready(borrowed);
+    }
+
+    FileQueueNext::Done
+  }
+}
+
 #[derive(Debug, Default)]
 enum SerialConnectionState {
   #[default]
@@ -153,7 +208,7 @@ enum SerialConnectionState {
 
   PendingAttempt,
 
-  SendingFile(String),
+  SendingFile(FileQueue),
 }
 
 impl SerialConnectionState {
@@ -267,7 +322,8 @@ impl crate::eff::Application for Application {
         }
 
         tracing::info!("has uploaded file ({file_contents:?})");
-        next.serial.connection = SerialConnectionState::SendingFile(file_contents);
+        let queue = FileQueue::from_str(&file_contents);
+        next.serial.connection = SerialConnectionState::SendingFile(queue);
         return (next, None);
       }
 
@@ -403,6 +459,17 @@ impl crate::eff::Application for Application {
 
       Message::Serial(data) => {
         tracing::debug!("has serial data - {data}");
+        match data.parse::<grbl::Response>() {
+          Ok(inner) => {
+            if let SerialConnectionState::SendingFile(queue) = &mut next.serial.connection {
+              queue.update(&inner);
+            }
+            tracing::info!("parsed grbl response = {inner:?}");
+          }
+          Err(error) => {
+            tracing::warn!("unrecognized grbl response - {error}");
+          }
+        }
 
         if !next.connected_clients.is_empty() {
           let mut cmds = vec![];
@@ -459,24 +526,23 @@ impl crate::eff::Application for Application {
 
         // Start by seeing if we are sending a file over. If so, we will attempt to take the next
         // line off the contents and push a raw serial cmd onto our return vector.
-        if let SerialConnectionState::SendingFile(contents) = next.serial.connection {
-          let mut lines = contents.lines();
-          let next_line = lines.next();
+        if let SerialConnectionState::SendingFile(mut queue) = next.serial.connection {
+          next.serial.connection = match queue.next() {
+            FileQueueNext::Ready(next_line) => {
+              // We have a line, grab the contents and create a raw serial command for it.
+              tracing::info!("sending next file line '{next_line:?}'");
+              cmds.push(Command::Serial(SerialCommand::Raw(next_line)));
 
-          if let Some(next_line) = next_line {
-            // We have a line, grab the contents and create a raw serial command for it.
-            tracing::info!("sending next file line '{next_line:?}'");
-            cmds.push(Command::Serial(SerialCommand::Raw(next_line.to_string())));
+              // TODO: our lines iterator trims the newline off the rest of our lines. There is
+              // probably a way to do this so we hold into the original iterator instead of
+              // manipulating it back and forth between iterator and concrete string.
+              SerialConnectionState::SendingFile(queue)
+            }
+            FileQueueNext::Waiting => SerialConnectionState::SendingFile(queue),
+            FileQueueNext::Done => SerialConnectionState::Idle(None),
+          };
 
-            // TODO: our lines iterator trims the newline off the rest of our lines. There is
-            // probably a way to do this so we hold into the original iterator instead of
-            // manipulating it back and forth between iterator and concrete string.
-            let remainder = lines.map(|l| format!("{l}\n")).collect::<String>();
-
-            next.serial.connection = SerialConnectionState::SendingFile(remainder);
-          } else {
-            next.serial.connection = SerialConnectionState::Idle(None);
-          }
+          return (next, Some(cmds));
         }
 
         if let SerialConnectionState::Idle(last_ping) = next.serial.connection {
