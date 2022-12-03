@@ -26,7 +26,7 @@ pub(super) async fn upload(mut request: tide::Request<shared_state::SharedState>
   }
 
   let size = request.len().unwrap_or(0);
-  if size == 0 || size > 3600 {
+  if size == 0 || size > request.state().config.max_upload_size {
     tracing::warn!("invalid request size - {size}");
     return Err(tide::Error::from_str(422, "file-too-large"));
   }

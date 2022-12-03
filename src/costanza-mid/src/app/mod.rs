@@ -551,7 +551,16 @@ impl crate::eff::Application for Application {
             FileQueueNext::Ready(next_line) => {
               // We have a line, grab the contents and create a raw serial command for it.
               tracing::info!("sending next file line '{next_line:?}'");
-              cmds.push(Command::Serial(SerialCommand::Raw(next_line)));
+              cmds.push(Command::Serial(SerialCommand::Raw(next_line.clone())));
+
+              for (_, mut client) in &mut next.connected_clients {
+                client.history.push(ClientHistoryEntry::SentCommand(ClientMessage {
+                  tick: 0,
+                  request: ClientMessageRequest::RawSerial(RawSerialRequest {
+                    value: next_line.clone(),
+                  }),
+                }));
+              }
 
               // TODO: our lines iterator trims the newline off the rest of our lines. There is
               // probably a way to do this so we hold into the original iterator instead of

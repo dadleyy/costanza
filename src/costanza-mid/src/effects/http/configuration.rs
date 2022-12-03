@@ -16,6 +16,9 @@ pub struct Configuration {
   /// The address to bind our tcp stream to.
   pub(super) addr: String,
 
+  /// The maxiumum amount of bytes to accept for file uploads.
+  pub(super) max_upload_size: usize,
+
   /// The domain that cookies will be bound to
   pub(super) domain: String,
 
